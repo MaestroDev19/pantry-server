@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pantry-server"
+version = "0.1.0"
+description = "Pantry FastAPI server"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi",
+  "uvicorn[standard]",
+  "supabase",
+  "python-jose[cryptography]",
+  "passlib[bcrypt]",
+  "pydantic",
+  "pydantic-settings",
+  "email-validator",
+  "httpx",
+  "python-multipart",
+  "python-dateutil",
+  "slowapi",
+  "psutil",
+  "langchain[google-genai]",
+  "langchain-community",
+  "langchain-text-splitters",
+  "langgraph",
+  "langchain-google-genai",
+]
+
+[tool.setuptools]
+package-dir = {"" = "."}
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["app*"]
+

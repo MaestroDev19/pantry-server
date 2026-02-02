@@ -1,0 +1,32 @@
+fastapi
+uvicorn[standard]
+
+# Database
+supabase
+
+# Authentication and security
+python-jose[cryptography]
+passlib[bcrypt]
+
+# Validation and settings
+pydantic
+pydantic-settings
+email-validator
+
+# HTTP and utilities
+httpx
+python-multipart
+python-dateutil
+
+# Rate limiting
+slowapi
+
+# System monitoring
+psutil
+
+# AI/LangChain (consolidated)
+langchain[google-genai]
+langchain-community
+langchain-text-splitters
+langgraph
+langchain-google-genai
