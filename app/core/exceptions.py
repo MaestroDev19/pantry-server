@@ -1,76 +1,80 @@
-# Custom exception handlers
-
 from __future__ import annotations
 
 import logging
-from typing import Any
 
-from fastapi import HTTPException, Request, status
+from fastapi import FastAPI, Request, status
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
+
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
 
-class AppError(Exception):
-    """Base for domain errors that map to HTTP responses."""
+def setup_exception_handlers(app: FastAPI) -> None:
+    """
+    Set up global exception handlers for the FastAPI app.
 
-    def __init__(
-        self,
-        message: str,
-        *,
-        status_code: int = status.HTTP_500_INTERNAL_SERVER_ERROR,
-        detail: dict[str, Any] | None = None,
-    ) -> None:
-        super().__init__(message)
-        self.message = message
-        self.status_code = status_code
-        self.detail = detail or {"message": message}
+    This configures custom handling for standard HTTP errors, data validation errors,
+    and all uncaught exceptions to produce controlled and informative JSON responses.
+    """
+
+    @app.exception_handler(StarletteHTTPException)
+    async def http_exception_handler(
+        request: Request, exc: StarletteHTTPException
+    ) -> JSONResponse:
+        """
+        Handle HTTP exceptions (e.g., 404 Not Found, 403 Forbidden).
+
+        Returns a JSON response with the original status code and error detail.
+        """
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={
+                "error": exc.detail,
+                "status_code": exc.status_code,
+            },
+        )
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_exception_handler(
+        request: Request, exc: RequestValidationError
+    ) -> JSONResponse:
+        """
+        Handle validation errors (e.g., request payload/data is invalid with respect to OpenAPI schema).
+
+        Returns a JSON response containing details about validation errors.
+        """
+        return JSONResponse(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            content={
+                "error": "Validation error",
+                "details": exc.errors(),
+            },
+        )
+
+    @app.exception_handler(Exception)
+    async def general_exception_handler(
+        request: Request, exc: Exception
+    ) -> JSONResponse:
+        """
+        Handle all unhandled and unexpected exceptions.
+
+        Logs the complete error to the server logs. If the application is in debug mode,
+        the error message is revealed in the response for debugging purposes.
+        Otherwise, a generic error message is shown to the client.
+        """
+        logger.error(f"Unexpected error: {exc}", exc_info=True)
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={
+                "error": "Internal server error",
+                "message": (
+                    str(exc) if settings.debug else "An unexpected error occurred"
+                ),
+            },
+        )
 
 
-class NotFoundError(AppError):
-    def __init__(self, message: str = "Resource not found", **kwargs: Any) -> None:
-        super().__init__(message, status_code=status.HTTP_404_NOT_FOUND, **kwargs)
-
-
-class UnauthorizedError(AppError):
-    def __init__(self, message: str = "Unauthorized", **kwargs: Any) -> None:
-        super().__init__(message, status_code=status.HTTP_401_UNAUTHORIZED, **kwargs)
-
-
-class ForbiddenError(AppError):
-    def __init__(self, message: str = "Forbidden", **kwargs: Any) -> None:
-        super().__init__(message, status_code=status.HTTP_403_FORBIDDEN, **kwargs)
-
-
-class ValidationError(AppError):
-    def __init__(self, message: str = "Validation error", **kwargs: Any) -> None:
-        super().__init__(message, status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, **kwargs)
-
-
-class ConflictError(AppError):
-    def __init__(self, message: str = "Conflict", **kwargs: Any) -> None:
-        super().__init__(message, status_code=status.HTTP_409_CONFLICT, **kwargs)
-
-
-def http_exception_from_app_error(exc: AppError) -> HTTPException:
-    return HTTPException(status_code=exc.status_code, detail=exc.detail)
-
-
-async def app_error_handler(request: Request, exc: AppError) -> JSONResponse:
-    logger.warning(
-        "AppError handled",
-        extra={"path": str(request.url.path), "status_code": exc.status_code, "message": exc.message},
-    )
-    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
-
-
-__all__ = [
-    "AppError",
-    "ConflictError",
-    "ForbiddenError",
-    "NotFoundError",
-    "UnauthorizedError",
-    "ValidationError",
-    "app_error_handler",
-    "http_exception_from_app_error",
-]
+__all__ = ["setup_exception_handlers"]

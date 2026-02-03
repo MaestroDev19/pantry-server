@@ -1,18 +1,30 @@
+from __future__ import annotations
+
+from functools import lru_cache
+
 from langchain_google_genai import ChatGoogleGenerativeAI
+
 from app.core.config import settings
 
-_client = None
 
+@lru_cache(maxsize=1)
 def get_gemini_client() -> ChatGoogleGenerativeAI:
-    """Initialize and cache the Gemini client."""
-    global _client
+    """
+    Get or create the Gemini client instance.
+    
+    Uses LRU cache to ensure a single client instance is reused across requests.
+    The client is thread-safe and can be safely shared.
+    
+    Returns:
+        ChatGoogleGenerativeAI: Configured Gemini client instance
+    """
+    return ChatGoogleGenerativeAI(
+        model=settings.gemini_model,
+        temperature=settings.gemini_temperature,
+        max_tokens=settings.gemini_max_tokens,
+        max_retries=settings.gemini_max_retries,
+        api_key=settings.google_genai_api_key,
+    )
 
-    if _client is None:
-        _client = ChatGoogleGenerativeAI(
-            model="gemini-2.5-flash",
-            temperature=0,
-            max_tokens=None,
-            max_retries=2,
-            api_key=settings.google_genai_api_key
-        )
-    return _client
+
+__all__ = ["get_gemini_client"]
