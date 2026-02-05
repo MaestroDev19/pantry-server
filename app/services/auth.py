@@ -6,7 +6,7 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from supabase import Client
 
-from app.services.supabase import get_supabase_client
+from app.deps.supabase import get_supabase_client
 
 auth_scheme = HTTPBearer(auto_error=False)
 

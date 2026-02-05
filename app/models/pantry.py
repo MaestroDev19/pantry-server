@@ -202,3 +202,60 @@ class PantryFilterParams(BaseModel):
     sort_order: str = Field(default="asc", pattern="^(asc|desc)$")                                  # "asc" or "desc"
     limit: int = Field(default=50, ge=1, le=100)                   # Max result count (pagination)
     offset: int = Field(default=0, ge=0)                           # Offset for pagination, 0-based
+    
+    
+    
+class PantryItemBulkCreate(BaseModel):
+    """Single item in bulk create request"""
+    name: str = Field(..., min_length=1, max_length=100)
+    category: CategoryEnum
+    quantity: float = Field(default=1.0, gt=0, le=10000)
+    unit: Optional[UnitEnum] = None
+    expiry_date: Optional[date] = None
+    expiry_visible: bool = True
+    
+    @field_validator("name")
+    def validate_name(cls, value: str) -> str:
+        """Ensure the item name is trimmed of whitespace and title-cased."""
+        return value.strip().title()
+    
+    @field_validator("expiry_date")
+    def validate_expiry_date(cls, value: Optional[date]) -> Optional[date]:
+        """Expiry date may not be set more than 1 year in the past."""
+        if value and value < date.today().replace(year=date.today().year - 1):
+            raise ValueError("Expiry date cannot be more than 1 year in the past")
+        return value
+
+class PantryItemsBulkCreateRequest(BaseModel):
+    """Request to bulk create pantry items"""
+    items: List[PantryItemBulkCreate] = Field(..., min_items=1, max_items=100)
+    
+    @field_validator("items")
+    @classmethod
+    def validate_unique_names(cls, value: List[PantryItemBulkCreate]) -> List[PantryItemBulkCreate]:
+        """Warn if duplicate names (optional - can allow duplicates)"""
+        names = [item.name.lower() for item in value]
+        if len(names) != len(set(names)):
+            # Could raise error or just allow duplicates
+            pass
+        return value
+
+class BulkUpsertResult(BaseModel):
+    """Result for a single item in bulk operation"""
+    name: str
+    success: bool
+    is_new: bool = False
+    item_id: Optional[UUID] = None
+    old_quantity: Optional[float] = None
+    new_quantity: Optional[float] = None
+    error: Optional[str] = None
+
+class PantryItemsBulkCreateResponse(BaseModel):
+    """Response for bulk create operation"""
+    total_requested: int
+    successful: int
+    failed: int
+    new_items: int
+    updated_items: int
+    results: List[BulkUpsertResult]
+    embeddings_queued: int
