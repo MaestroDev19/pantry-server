@@ -1,6 +1,6 @@
 # Pantry Server
 
-FastAPI backend for the Pantry application. Provides REST API endpoints for managing pantry items, recipes, shopping lists, and households with Supabase integration and AI-powered features using Google Gemini.
+FastAPI + Supabase backend for the Pantry application, providing authenticated, household-scoped pantry item management with AI-powered features (embeddings and Gemini-based workflows).
 
 ## Table of Contents
 
@@ -42,8 +42,15 @@ Pantry Server is a modern, scalable backend API built with FastAPI that enables 
 
 - ✅ Supabase authentication integration
 - ✅ Bearer token validation
-- ✅ User authentication dependency (`get_current_user`)
+- ✅ User authentication and household dependencies (`get_current_user`, `get_current_user_id`, `get_current_household_id`)
 - ✅ Row Level Security (RLS) support via anon key client
+
+#### Pantry API
+
+- ✅ Household-scoped pantry item CRUD via `/pantry` routes
+- ✅ Single and bulk pantry item upsert with validation
+- ✅ User-scoped and household-scoped pantry item listing
+- ✅ Embedding generation and storage for pantry items
 
 #### Data Models
 
@@ -68,7 +75,7 @@ Pantry Server is a modern, scalable backend API built with FastAPI that enables 
 
 ### 🚧 In Progress / Planned
 
-- ⏳ **API Routes**: Endpoints for CRUD operations (models defined, routes pending)
+- ⏳ **Additional Domain API Routes**: Recipes, shopping lists, households, and user preferences
 - ⏳ **Recipe Generation**: AI-powered recipe generation from pantry items
 - ⏳ **Shopping List Generation**: Automatic list creation based on pantry state
 - ⏳ **Background Workers**: Embedding generation and batch processing
@@ -215,16 +222,21 @@ app/
 │
 ├── routers/                   # API route definitions
 │   ├── __init__.py
-│   └── health_routes.py      # Health check endpoint
+│   ├── health_routes.py      # Health check endpoint
+│   └── pantry.py             # Pantry item routes (household/user scoped)
 │
 ├── services/                  # Business logic and external integrations
 │   ├── __init__.py
 │   ├── gemini.py             # Gemini AI client (cached singleton)
-│   └── supabase.py           # Supabase client dependencies
+│   ├── pantry_service.py     # Pantry domain service and embeddings integration
+│   └── auth.py               # Authentication and household resolution dependencies
+│
+├── deps/                      # Dependency providers (FastAPI DI)
+│   ├── __init__.py
+│   └── supabase.py           # Supabase client dependencies (anon / service role)
 │
 └── utils/                     # Utility functions and helpers
     ├── __init__.py
-    ├── auth.py               # Authentication dependencies
     ├── constants.py          # Application constants
     ├── embedding.py          # Embeddings client (cached singleton)
     ├── formatters.py         # Response formatting utilities
@@ -267,7 +279,7 @@ Pydantic models follow a consistent pattern:
 
 FastAPI dependencies for:
 
-- Authentication: `get_current_user()`
+- Authentication and households: `get_current_user()`, `get_current_user_id()`, `get_current_household_id()`
 - Database clients: `get_supabase_client()`, `get_supabase_service_role_client()`
 - AI clients: `get_gemini_client()`, `embeddings_client()`
 
