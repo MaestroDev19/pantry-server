@@ -290,8 +290,8 @@ FastAPI dependencies for:
 | Variable                    | Description                                      | Example                                   |
 | --------------------------- | ------------------------------------------------ | ----------------------------------------- |
 | `SUPABASE_URL`              | Supabase project URL                             | `https://xxxxx.supabase.co`               |
-| `SUPABASE_ANON_KEY`         | Supabase anonymous/public key                    | `eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...` |
-| `SUPABASE_SERVICE_ROLE_KEY` | Supabase service role key (for admin operations) | `eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...` |
+| `SUPABASE_ANON_KEY`         | Supabase anonymous/public key                    | `eyJ********************************9...` |
+| `SUPABASE_SERVICE_ROLE_KEY` | Supabase service role key (for admin operations) | `eyJ********************************9...` |
 
 ### Optional Variables
 
