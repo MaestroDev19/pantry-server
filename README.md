@@ -52,6 +52,12 @@ Pantry Server is a modern, scalable backend API built with FastAPI that enables 
 - ✅ User-scoped and household-scoped pantry item listing
 - ✅ Embedding generation and storage for pantry items
 
+#### Household API
+
+- ✅ Join household by invite code (`POST /households/join`) — migrates user's pantry items and switches membership
+- ✅ Leave household (`POST /households/leave`) — creates a new personal household and moves items
+- ✅ Convert personal to joinable (`POST /households/convert-to-joinable`) — make a personal household shareable
+
 #### Data Models
 
 - ✅ **Pantry Models**: Complete schema for pantry items with categories, units, expiry tracking
@@ -75,7 +81,7 @@ Pantry Server is a modern, scalable backend API built with FastAPI that enables 
 
 ### 🚧 In Progress / Planned
 
-- ⏳ **Additional Domain API Routes**: Recipes, shopping lists, households, and user preferences
+- ⏳ **Additional Domain API Routes**: Recipes, shopping lists, and user preferences
 - ⏳ **Recipe Generation**: AI-powered recipe generation from pantry items
 - ⏳ **Shopping List Generation**: Automatic list creation based on pantry state
 - ⏳ **Background Workers**: Embedding generation and batch processing
@@ -223,13 +229,15 @@ app/
 ├── routers/                   # API route definitions
 │   ├── __init__.py
 │   ├── health_routes.py      # Health check endpoint
+│   ├── household.py          # Household routes (join, leave, convert-to-joinable)
 │   └── pantry.py             # Pantry item routes (household/user scoped)
 │
 ├── services/                  # Business logic and external integrations
 │   ├── __init__.py
+│   ├── auth.py               # Authentication and household resolution dependencies
+│   ├── house_hold_service.py  # Household service (join, leave, convert, create)
 │   ├── gemini.py             # Gemini AI client (cached singleton)
-│   ├── pantry_service.py     # Pantry domain service and embeddings integration
-│   └── auth.py               # Authentication and household resolution dependencies
+│   └── pantry_service.py     # Pantry domain service and embeddings integration
 │
 ├── deps/                      # Dependency providers (FastAPI DI)
 │   ├── __init__.py
@@ -280,7 +288,7 @@ Pydantic models follow a consistent pattern:
 FastAPI dependencies for:
 
 - Authentication and households: `get_current_user()`, `get_current_user_id()`, `get_current_household_id()`
-- Database clients: `get_supabase_client()`, `get_supabase_service_role_client()`
+- Database clients: `get_supabase_client()`, `get_supabase_service_role_client()` (service role used for household join/leave/convert to bypass RLS)
 - AI clients: `get_gemini_client()`, `embeddings_client()`
 
 ## Environment Variables
@@ -354,18 +362,24 @@ FastAPI dependencies for:
 - **GET** `/` - Simple status endpoint (excluded from OpenAPI)
   - Response: `{"status": "ok"}`
 
+#### Households (authenticated)
+
+- **POST** `/households/join` - Join a household by invite code. Body: `{"invite_code": "ABC123"}`. The user leaves their current household; their pantry items are moved to the new household.
+- **POST** `/households/leave` - Leave the current household and switch to a new personal household. Pantry items are moved to the new personal household.
+- **POST** `/households/convert-to-joinable` - Convert the current user's personal household to a joinable (shared) household. Optional body: `{"name": "Household Name"}`. Returns the household with `invite_code` for sharing.
+
+#### Pantry (when pantry router is mounted)
+
+- **POST** `/pantry/add_item` - Add a single pantry item
+- **POST** `/pantry/bulk_add` - Add multiple pantry items
+- **GET** `/pantry/get_household_items` - List all pantry items in the current household
+- **GET** `/pantry/get_my_items` - List pantry items owned by the current user in the household
+- **PUT** `/pantry/update_item` - Update a pantry item
+- **DELETE** `/pantry/delete_item` - Delete a pantry item
+
 ### Planned Endpoints
 
 Routes are defined in models but not yet implemented. Planned endpoints include:
-
-#### Pantry Management
-
-- `GET /api/pantry` - List pantry items
-- `POST /api/pantry` - Add pantry item
-- `GET /api/pantry/{item_id}` - Get pantry item
-- `PUT /api/pantry/{item_id}` - Update pantry item
-- `DELETE /api/pantry/{item_id}` - Delete pantry item
-- `GET /api/pantry/summary` - Get pantry summary
 
 #### Recipe Management
 
@@ -383,14 +397,6 @@ Routes are defined in models but not yet implemented. Planned endpoints include:
 - `GET /api/shopping-lists/{list_id}` - Get shopping list
 - `POST /api/shopping-lists/generate` - Generate from pantry
 - `POST /api/shopping-lists/{list_id}/mark-purchased` - Mark items purchased
-
-#### Households
-
-- `GET /api/households` - List user's households
-- `POST /api/households` - Create household
-- `GET /api/households/{household_id}` - Get household
-- `POST /api/households/join` - Join household
-- `POST /api/households/{household_id}/leave` - Leave household
 
 #### User Preferences
 
@@ -410,14 +416,14 @@ Routes are defined in models but not yet implemented. Planned endpoints include:
 ### Adding New Routes
 
 1. Create route file in `app/routers/`
-2. Define router with `APIRouter(tags=["tag-name"])`
+2. Define router with `APIRouter(prefix="/your-prefix", tags=["tag-name"])`
 3. Add routes with proper type hints and response models
 4. Include router in `app/main.py`:
 
 ```python
 from app.routers import your_router
 
-app.include_router(your_router, prefix="/api/your-prefix")
+app.include_router(your_router)
 ```
 
 ### Adding New Models
