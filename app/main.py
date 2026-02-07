@@ -11,7 +11,7 @@ from app.core.config import get_settings
 from app.core.errors import create_unhandled_exception_handler
 from app.core.exceptions import AppError, app_error_handler
 from app.core.logging import configure_logging
-from app.routers import health_router
+from app.routers import health_router, household_router
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +38,7 @@ def create_app(*, settings: Any | None = None) -> FastAPI:
     app.add_exception_handler(Exception, create_unhandled_exception_handler(app_env=resolved_settings.app_env))
 
     app.include_router(health_router)
+    app.include_router(household_router)
 
     @app.get("/", include_in_schema=False)
     def get_root() -> JSONResponse:

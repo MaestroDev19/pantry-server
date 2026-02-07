@@ -57,9 +57,20 @@ class HouseholdJoinRequest(BaseModel):
             raise ValueError("Invite code must be alphanumeric")
         return normalized_value
 
+class HouseholdJoinResponse(BaseModel):
+    """Response after joining a household by invite code."""
+    household: HouseholdResponse
+    items_moved: int = 0
+
+
 class HouseholdLeaveResponse(BaseModel):
     """Response when leaving household"""
     message: str
     items_deleted: int = 0
     new_household_id: Optional[UUID] = None
     new_household_name: Optional[str] = None
+
+
+class HouseholdConvertToJoinableRequest(BaseModel):
+    """Optional body when converting personal household to joinable (shared)."""
+    name: Optional[str] = Field(None, min_length=1, max_length=100)
