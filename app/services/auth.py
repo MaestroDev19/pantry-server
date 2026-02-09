@@ -1,12 +1,22 @@
 from __future__ import annotations
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from uuid import UUID
-from supabase import Client, User
+from supabase import Client
 import anyio
+
+try:
+    from gotrue import User
+except ImportError:
+    from typing import Any
+    User = Any  # type: ignore[misc, assignment]
+
+from app.core.exceptions import AppError
+from app.core.logging import get_logger
 from app.deps.supabase import get_supabase_client
 
+logger = get_logger(__name__)
 auth_scheme = HTTPBearer(auto_error=False)
 
 
@@ -28,12 +38,13 @@ async def get_current_user(
         Authenticated user object from Supabase (contains id, email, user_metadata, etc.)
         
     Raises:
-        HTTPException: 401 if token is missing, invalid, or expired
+        AppError: 401 if token is missing, invalid, or expired
     """
     if not credentials:
-        raise HTTPException(
+        logger.error("Missing authentication credentials")
+        raise AppError(
+            "Missing authentication credentials",
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Missing authentication credentials",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
@@ -43,20 +54,23 @@ async def get_current_user(
         )
 
         if not user_response.user:
-            raise HTTPException(
+            logger.error("Invalid authentication credentials (no user in response)")
+            raise AppError(
+                "Invalid authentication credentials",
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid authentication credentials",
                 headers={"WWW-Authenticate": "Bearer"},
             )
 
+        logger.info("User authenticated", extra={"user_id": str(user_response.user.id)})
         return user_response.user
 
-    except HTTPException:
+    except AppError:
         raise
     except Exception as e:
-        raise HTTPException(
+        logger.error("Could not validate credentials", exc_info=True)
+        raise AppError(
+            "Could not validate credentials",
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Could not validate credentials",
             headers={"WWW-Authenticate": "Bearer"},
         ) from e
         
@@ -73,21 +87,17 @@ async def get_current_user_id(
         The UUID for the authenticated user.
 
     Raises:
-        HTTPException: If the user's ID is missing or not a valid UUID.
+        AppError: If the user's ID is missing or not a valid UUID.
     """
     user_id = getattr(user, "id", None)
     if not user_id:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authenticated user missing user ID",
-        )
+        logger.error("Authenticated user missing user ID")
+        raise AppError("Authenticated user missing user ID", status_code=status.HTTP_401_UNAUTHORIZED)
     try:
         uuid_obj = UUID(str(user_id))
     except Exception:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authenticated user has invalid user ID",
-        )
+        logger.error("Authenticated user has invalid user ID", extra={"user_id": str(user_id)})
+        raise AppError("Authenticated user has invalid user ID", status_code=status.HTTP_401_UNAUTHORIZED)
     return uuid_obj
 
 async def get_current_household_id(
@@ -106,14 +116,12 @@ async def get_current_household_id(
         The UUID for the authenticated user's primary household.
 
     Raises:
-        HTTPException: If the user's ID is missing or not a valid UUID.
+        AppError: If the user's ID is missing or not a valid UUID.
     """
     # Guard against missing user id from Supabase
     if not user_id:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authenticated user missing user ID",
-        )
+        logger.error("get_current_household_id: missing user_id")
+        raise AppError("Authenticated user missing user ID", status_code=status.HTTP_401_UNAUTHORIZED)
 
     try:
         response = await anyio.to_thread.run_sync(
@@ -126,17 +134,18 @@ async def get_current_household_id(
             )
         )
     except Exception as exc:
-        raise HTTPException(
+        logger.error("Failed to resolve household membership", extra={"user_id": str(user_id)}, exc_info=True)
+        raise AppError(
+            "Failed to resolve household membership",
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Failed to resolve household membership",
         ) from exc
 
     if not getattr(response, "data", None):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="User is not a member of any household",
-        )
+        logger.error("User is not a member of any household", extra={"user_id": str(user_id)})
+        raise AppError("User is not a member of any household", status_code=status.HTTP_401_UNAUTHORIZED)
 
-    return UUID(response.data[0]["household_id"])
+    household_id = UUID(response.data[0]["household_id"])
+    logger.info("Resolved household for user", extra={"user_id": str(user_id), "household_id": str(household_id)})
+    return household_id
 
 

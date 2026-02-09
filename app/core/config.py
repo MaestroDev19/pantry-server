@@ -45,8 +45,11 @@ class AppSettings(BaseSettings):
     """
     Centralized application settings loaded from environment vars or .env using Pydantic's BaseSettings.
     """
-    # Settings model config: Load environment variables from .env with UTF-8 encoding
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
     app_env: str = os.getenv("APP_ENV", "development")
     app_name: str = os.getenv("APP_NAME", "pantry-server")
@@ -87,3 +90,8 @@ class AppSettings(BaseSettings):
     )
 
 settings = AppSettings()
+
+
+def get_settings() -> AppSettings:
+    """Return the application settings instance."""
+    return settings

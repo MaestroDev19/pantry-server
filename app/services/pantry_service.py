@@ -1,13 +1,15 @@
 from typing import List, Dict, Optional
 from uuid import UUID
 from datetime import datetime
-from utils.date_time_styling import format_iso_datetime, format_iso_date, format_display_date
+from app.utils.date_time_styling import format_iso_datetime, format_iso_date, format_display_date
 import anyio  # Library providing asynchronous concurrency primitives and utilities for running sync code in threads
-from fastapi import HTTPException, status  # Used to handle HTTP errors and response codes
+from fastapi import status
 from supabase import Client  # Supabase client for Postgres operations
 
-from ai.vector_store import get_vector_store  # Factory to obtain a vector store instance (e.g., for semantic search)
-from models.pantry import (
+from app.core.exceptions import AppError
+from app.core.logging import get_logger
+from app.ai.vector_store import get_vector_store
+from app.models.pantry import (
     PantryItem,
     PantryItemCreate,
     PantryItemUpsert,
@@ -16,7 +18,9 @@ from models.pantry import (
     PantryItemsBulkCreateResponse,
     BulkUpsertResult,
 )  # Collection of Pydantic models for data validation and serialization for pantry operations
-from utils.embedding import embeddings_client  # Embedding utility for generating vector representations of pantry items
+from app.utils.embedding import embeddings_client
+
+logger = get_logger(__name__)
 
 
 class PantryService:
@@ -59,10 +63,8 @@ class PantryService:
         )
         # If user is not in the household, abort with HTTP 403 Forbidden to prevent unauthorized inserts
         if not getattr(membership_response, "data", None):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="User is not a member of the specified household",
-            )
+            logger.error("Add pantry item: user not in household", extra={"household_id": str(household_id), "user_id": str(user_id)})
+            raise AppError("User is not a member of the specified household", status_code=status.HTTP_403_FORBIDDEN)
 
         # --- Build dictionary for upserting pantry item with current creation/updated dates and related fields
         data = pantry_item.model_dump()
@@ -84,22 +86,17 @@ class PantryService:
                 )
             )
         except Exception as exc:
-            # If a database/network error occurs, respond with 502 Bad Gateway.
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail="Failed to create pantry item",
-            ) from exc
+            logger.error("Failed to create pantry item (db/network)", exc_info=True, extra={"household_id": str(household_id)})
+            raise AppError("Failed to create pantry item", status_code=status.HTTP_502_BAD_GATEWAY) from exc
 
         # If upsert fails to return a valid data response, return an internal error; item creation failed.
         if not getattr(response, "data", None):
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Pantry item was not created",
-            )
+            logger.error("Pantry item upsert returned no data", extra={"household_id": str(household_id)})
+            raise AppError("Pantry item was not created", status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
         # Grab the item dictionary (row) returned from database upsert. We expect exactly one row.
         row = response.data[0]
-        print(row)  # Useful debug print
+        logger.debug("Pantry item upserted", extra={"item_id": row.get("id"), "household_id": str(household_id)})
 
         # --- Try to generate semantic embedding and insert into 'pantry_embeddings' table
         embedding_generated = False  # Track embedding status so it can be reported to the UI
@@ -158,6 +155,7 @@ class PantryService:
             embedding_generated = False
 
         # Compose and return the response, reflecting upsert result and embedding status
+        logger.info("Pantry item added", extra={"item_id": row.get("id"), "household_id": str(household_id), "embedding_generated": embedding_generated})
         return PantryItemUpsertResponse(
             id=row["id"],                   # Assigned or detected item id
             is_new=True,                    # This interface is only for new inserts, always true
@@ -189,10 +187,8 @@ class PantryService:
             )
         )
         if not getattr(membership_response, "data", None):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="User is not a member of the specified household",
-            )
+            logger.error("Bulk add: user not in household", extra={"household_id": str(household_id), "user_id": str(user_id)})
+            raise AppError("User is not a member of the specified household", status_code=status.HTTP_403_FORBIDDEN)
 
         # ----- 2. Prepare Bulk Upsert Data: Augment each item with core fields
         rows_to_upsert: List[Dict[str, object]] = []  # Will contain a dict per row to insert
@@ -216,18 +212,13 @@ class PantryService:
                 )
             )
         except Exception as exc:
-            # Return 502 if there was any sort of database/network fault
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail="Failed to create pantry items",
-            ) from exc
+            logger.error("Bulk pantry create failed (db/network)", exc_info=True, extra={"household_id": str(household_id), "count": len(pantry_items)})
+            raise AppError("Failed to create pantry items", status_code=status.HTTP_502_BAD_GATEWAY) from exc
 
         # If the upsert was not successful (e.g. returns no data), treat as an error.
         if not getattr(response, "data", None):
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Pantry items were not created",
-            )
+            logger.error("Bulk pantry upsert returned no data", extra={"household_id": str(household_id)})
+            raise AppError("Pantry items were not created", status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
         created_rows: List[Dict] = list(response.data)  # All upserted rows; each a dict
 
@@ -324,6 +315,7 @@ class PantryService:
         failed = total_requested - successful
 
         # Return a bulk create response containing results and summary
+        logger.info("Bulk pantry items added", extra={"household_id": str(household_id), "successful": successful, "total": total_requested, "embeddings_queued": embeddings_queued})
         return PantryItemsBulkCreateResponse(
             total_requested=total_requested,
             successful=successful,
@@ -357,11 +349,8 @@ class PantryService:
                 )
             )
         except Exception as exc:
-            # Database error: respond with HTTP 502 (gateway error)
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail="Failed to fetch pantry items",
-            ) from exc
+            logger.error("Failed to fetch pantry items", exc_info=True, extra={"household_id": str(household_id), "user_id": str(user_id)})
+            raise AppError("Failed to fetch pantry items", status_code=status.HTTP_502_BAD_GATEWAY) from exc
 
         # Return data list from response or empty if none
         return response.data or []
@@ -387,11 +376,8 @@ class PantryService:
                 )
             )
         except Exception as exc:
-            # In case of database/query failure, signal 502 error to client.
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail="Failed to fetch household pantry items",
-            ) from exc
+            logger.error("Failed to fetch household pantry items", exc_info=True, extra={"household_id": str(household_id)})
+            raise AppError("Failed to fetch household pantry items", status_code=status.HTTP_502_BAD_GATEWAY) from exc
 
         return response.data or []
     
@@ -420,20 +406,15 @@ class PantryService:
                 )
             )
         except Exception as exc:
-            # Any error during update, bubble up to client as 502 error.
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail="Failed to update pantry item",
-            ) from exc
+            logger.error("Failed to update pantry item", exc_info=True, extra={"household_id": str(household_id), "user_id": str(user_id)})
+            raise AppError("Failed to update pantry item", status_code=status.HTTP_502_BAD_GATEWAY) from exc
 
         if not getattr(response, "data", None):
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Pantry item not found or not owned by user",
-            )
+            logger.error("Update pantry item: not found or not owned", extra={"household_id": str(household_id), "user_id": str(user_id)})
+            raise AppError("Pantry item not found or not owned by user", status_code=status.HTTP_404_NOT_FOUND)
 
         row = response.data[0]
-
+        logger.info("Pantry item updated", extra={"item_id": str(row.get("id")), "household_id": str(household_id)})
         return PantryItemUpsertResponse(
             id=row["id"],
             is_new=False,
@@ -469,19 +450,15 @@ class PantryService:
                 )
             )
         except Exception as exc:
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail="Failed to delete pantry item",
-            ) from exc
+            logger.error("Failed to delete pantry item", exc_info=True, extra={"item_id": str(item_id), "household_id": str(household_id)})
+            raise AppError("Failed to delete pantry item", status_code=status.HTTP_502_BAD_GATEWAY) from exc
 
         if not getattr(response, "data", None):
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Pantry item not found or not owned by user",
-            )
+            logger.error("Delete pantry item: not found or not owned", extra={"item_id": str(item_id), "household_id": str(household_id)})
+            raise AppError("Pantry item not found or not owned by user", status_code=status.HTTP_404_NOT_FOUND)
 
         row = response.data[0]
-
+        logger.info("Pantry item deleted", extra={"item_id": str(item_id), "household_id": str(household_id)})
         return PantryItemUpsertResponse(
             id=row["id"],
             is_new=False,

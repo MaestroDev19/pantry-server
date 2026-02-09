@@ -1,8 +1,12 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, status
 from uuid import UUID
 from typing import List
 
+from app.core.exceptions import AppError
+from app.core.logging import get_logger
 from app.deps.supabase import get_supabase_client
+
+logger = get_logger(__name__)
 from app.services.auth import get_current_household_id, get_current_user_id
 from app.services.pantry_service import PantryService
 from app.models.pantry import (
@@ -39,7 +43,9 @@ async def add_single_pantry_item(
     """
     result = await pantry_service.add_pantry_item_single(pantry_item, household_id, user_id)
     if result is None:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to add pantry item")
+        logger.error("Failed to add pantry item", extra={"household_id": str(household_id), "user_id": str(user_id)})
+        raise AppError("Failed to add pantry item", status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    logger.info("Pantry item added", extra={"item_id": getattr(result, "id", None), "household_id": str(household_id)})
     return result
 
 async def add_multiple_pantry_items(
@@ -56,10 +62,13 @@ async def add_multiple_pantry_items(
     - Raises HTTP 400 if no items, HTTP 500 if failed to add.
     """
     if not pantry_items.items:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No pantry items provided")
+        logger.error("Bulk add: no pantry items provided")
+        raise AppError("No pantry items provided", status_code=status.HTTP_400_BAD_REQUEST)
     result = await pantry_service.add_pantry_item_bulk(pantry_items.items, household_id, user_id)
     if result is None:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Bulk pantry add failed")
+        logger.error("Bulk pantry add failed", extra={"household_id": str(household_id), "count": len(pantry_items.items)})
+        raise AppError("Bulk pantry add failed", status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    logger.info("Bulk pantry items added", extra={"household_id": str(household_id), "successful": result.successful})
     return result
 
 async def get_all_pantry_items(
@@ -73,7 +82,9 @@ async def get_all_pantry_items(
     """
     items = await pantry_service.get_household_pantry_items(household_id)
     if items is None:
+        logger.info("Get household pantry items returned none", extra={"household_id": str(household_id)})
         return []
+    logger.info("Fetched household pantry items", extra={"household_id": str(household_id), "count": len(items)})
     return items
 
 async def get_my_pantry_items(
@@ -89,7 +100,9 @@ async def get_my_pantry_items(
     """
     items = await pantry_service.get_my_pantry_items(household_id, user_id)
     if items is None:
+        logger.info("Get my pantry items returned none", extra={"household_id": str(household_id), "user_id": str(user_id)})
         return []
+    logger.info("Fetched my pantry items", extra={"household_id": str(household_id), "user_id": str(user_id), "count": len(items)})
     return items
 
 async def update_pantry_item(
@@ -106,7 +119,9 @@ async def update_pantry_item(
     """
     result = await pantry_service.update_pantry_item(pantry_item, household_id, user_id)
     if result is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Pantry item not found or could not be updated")
+        logger.error("Pantry item update failed (not found or forbidden)", extra={"household_id": str(household_id), "user_id": str(user_id)})
+        raise AppError("Pantry item not found or could not be updated", status_code=status.HTTP_404_NOT_FOUND)
+    logger.info("Pantry item updated", extra={"item_id": getattr(pantry_item, "id", None), "household_id": str(household_id)})
     return result
 
 async def delete_pantry_item(
@@ -122,7 +137,9 @@ async def delete_pantry_item(
     """
     result = await pantry_service.delete_pantry_item(item_id, household_id, user_id)
     if result is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Pantry item not found for deletion")
+        logger.error("Pantry item delete failed (not found)", extra={"item_id": str(item_id), "household_id": str(household_id)})
+        raise AppError("Pantry item not found for deletion", status_code=status.HTTP_404_NOT_FOUND)
+    logger.info("Pantry item deleted", extra={"item_id": str(item_id), "household_id": str(household_id)})
     return result
 
 # --- FastAPI Route Registrations ---

@@ -23,4 +23,9 @@ def configure_logging(*, app_env: str) -> None:
     root_logger.addHandler(handler)
 
 
-__all__ = ["configure_logging"]
+def get_logger(name: str) -> logging.Logger:
+    """Return a logger for the given module name. Use for info, success, and error logs."""
+    return logging.getLogger(name)
+
+
+__all__ = ["configure_logging", "get_logger"]

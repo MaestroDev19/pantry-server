@@ -150,6 +150,9 @@ class PantryItemResponse(PantryItemBase):
         from_attributes = True   # Enable ORM mode for easy DB-to-model mapping
         use_enum_values = True   # Auto-convert enums to their value when serializing to JSON
 
+
+PantryItem = PantryItemResponse  # Alias for service/API return types
+
 class PantryItemWithOwner(PantryItemResponse):
     """
     Extends PantryItemResponse to include owner email/name, useful for shared households.

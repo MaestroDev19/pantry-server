@@ -11,6 +11,8 @@ FastAPI + Supabase backend for the Pantry application, providing authenticated, 
 - [Setup](#setup)
 - [Running the Server](#running-the-server)
 - [Project Structure](#project-structure)
+- [Testing](#testing)
+- [Documentation](#documentation)
 - [Architecture](#architecture)
 - [Environment Variables](#environment-variables)
 - [API Documentation](#api-documentation)
@@ -68,9 +70,10 @@ Pantry Server is a modern, scalable backend API built with FastAPI that enables 
 
 #### Services
 
-- ✅ Supabase client service (anon and service role)
-- ✅ Gemini AI client with LRU caching
-- ✅ Embeddings client for vector operations
+- ✅ Supabase client service (anon and service role) in `app/deps/`
+- ✅ Gemini AI client with LRU caching in `app/deps/`
+- ✅ Embeddings client for vector operations in `app/utils/`
+- ✅ Unit and integration test layout in `tests/` (unit + integration, pytest)
 
 #### Utilities
 
@@ -213,13 +216,11 @@ app/
 ├── main.py                    # FastAPI app factory, lifespan, middleware
 │
 ├── core/                      # Core application configuration
-│   ├── __init__.py
 │   ├── config.py             # AppSettings, environment configuration
 │   ├── exceptions.py         # Exception handlers and custom errors
 │   └── logging.py            # Logging configuration
 │
 ├── models/                    # Pydantic schemas and domain models
-│   ├── __init__.py
 │   ├── household.py          # Household and member models
 │   ├── pantry.py             # Pantry item models and enums
 │   ├── recipe.py             # Recipe models and AI request/response
@@ -227,29 +228,77 @@ app/
 │   └── user.py               # User preferences models
 │
 ├── routers/                   # API route definitions
-│   ├── __init__.py
 │   ├── health_routes.py      # Health check endpoint
 │   ├── household.py          # Household routes (join, leave, convert-to-joinable)
 │   └── pantry.py             # Pantry item routes (household/user scoped)
 │
 ├── services/                  # Business logic and external integrations
-│   ├── __init__.py
 │   ├── auth.py               # Authentication and household resolution dependencies
-│   ├── house_hold_service.py  # Household service (join, leave, convert, create)
-│   ├── gemini.py             # Gemini AI client (cached singleton)
+│   ├── household_service.py   # Household service (join, leave, convert, create)
 │   └── pantry_service.py     # Pantry domain service and embeddings integration
 │
 ├── deps/                      # Dependency providers (FastAPI DI)
-│   ├── __init__.py
-│   └── supabase.py           # Supabase client dependencies (anon / service role)
+│   ├── supabase.py           # Supabase client dependencies (anon / service role)
+│   └── gemini.py             # Gemini AI client (cached singleton)
 │
-└── utils/                     # Utility functions and helpers
-    ├── __init__.py
-    ├── constants.py          # Application constants
-    ├── embedding.py          # Embeddings client (cached singleton)
-    ├── formatters.py         # Response formatting utilities
-    └── validators.py         # Input validation helpers
+├── utils/                     # Utility functions and helpers
+│   ├── constants.py          # Application constants
+│   ├── date_time_styling.py  # Date/datetime formatting
+│   ├── embedding.py          # Embeddings client (cached singleton)
+│   ├── formatters.py         # Response formatting utilities
+│   └── validators.py         # Input validation helpers
+│
+└── ai/                        # AI and vector store integration
+    └── vector_store.py        # Vector store for semantic search
+
+tests/                         # Unit and integration tests
+├── conftest.py                # Shared fixtures (app, client, test_settings)
+├── unit/                      # Unit tests (no HTTP, mocked I/O)
+└── integration/               # API tests (TestClient)
 ```
+
+Each major folder under `app/` and `tests/` has a README describing its role and contents (see [Documentation](#documentation)).
+
+## Testing
+
+Tests live in `tests/`: **unit** (no HTTP, mocked I/O) and **integration** (API tests with `TestClient`).
+
+### Install dev dependencies
+
+```bash
+pip install -r requirements-dev.txt
+# or
+pip install -e ".[dev]"
+```
+
+### Run tests
+
+From the repository root (`server/`):
+
+```bash
+# All tests
+pytest
+
+# Unit only
+pytest tests/unit
+
+# Integration only
+pytest tests/integration
+
+# With coverage
+pytest --cov=app
+```
+
+See `tests/README.md` for fixtures and layout details.
+
+## Documentation
+
+Each major folder has a short README:
+
+- **app/README.md** — Package overview and subpackages
+- **app/core/**, **app/models/**, **app/routers/**, **app/services/**, **app/deps/**, **app/utils/**, **app/ai/** — Purpose and module list
+- **tests/README.md** — How to run unit vs integration tests and use fixtures
+- **tests/unit/README.md**, **tests/integration/README.md** — What each test directory contains
 
 ## Architecture
 
@@ -368,7 +417,9 @@ FastAPI dependencies for:
 - **POST** `/households/leave` - Leave the current household and switch to a new personal household. Pantry items are moved to the new personal household.
 - **POST** `/households/convert-to-joinable` - Convert the current user's personal household to a joinable (shared) household. Optional body: `{"name": "Household Name"}`. Returns the household with `invite_code` for sharing.
 
-#### Pantry (when pantry router is mounted)
+#### Pantry
+
+The pantry router is always included. Endpoints:
 
 - **POST** `/pantry/add_item` - Add a single pantry item
 - **POST** `/pantry/bulk_add` - Add multiple pantry items
@@ -442,13 +493,7 @@ app.include_router(your_router)
 
 ### Testing
 
-```bash
-# Run tests (when implemented)
-pytest
-
-# Run with coverage
-pytest --cov=app
-```
+See [Testing](#testing) for install and run commands. Use `pytest`, `pytest tests/unit`, `pytest tests/integration`, or `pytest --cov=app`.
 
 ### Code Quality
 

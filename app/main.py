@@ -8,10 +8,9 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from app.core.config import get_settings
-from app.core.errors import create_unhandled_exception_handler
-from app.core.exceptions import AppError, app_error_handler
+from app.core.exceptions import AppError, app_error_handler, setup_exception_handlers
 from app.core.logging import configure_logging
-from app.routers import health_router, household_router
+from app.routers import health_router, household_router, pantry_router
 
 logger = logging.getLogger(__name__)
 
@@ -34,11 +33,12 @@ def create_app(*, settings: Any | None = None) -> FastAPI:
         response.headers["x-app-name"] = resolved_settings.app_name
         return response
 
+    setup_exception_handlers(app)
     app.add_exception_handler(AppError, app_error_handler)
-    app.add_exception_handler(Exception, create_unhandled_exception_handler(app_env=resolved_settings.app_env))
 
     app.include_router(health_router)
     app.include_router(household_router)
+    app.include_router(pantry_router)
 
     @app.get("/", include_in_schema=False)
     def get_root() -> JSONResponse:

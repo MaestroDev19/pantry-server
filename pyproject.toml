@@ -29,6 +29,18 @@ dependencies = [
   "langchain-google-genai",
 ]
 
+[project.optional-dependencies]
+dev = [
+  "pytest",
+  "pytest-asyncio",
+  "pytest-cov",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+pythonpath = ["."]
+
 [tool.setuptools]
 package-dir = {"" = "."}
 

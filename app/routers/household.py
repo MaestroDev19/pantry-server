@@ -5,7 +5,10 @@ from uuid import UUID
 from fastapi import APIRouter, Body, Depends
 from supabase import Client
 
+from app.core.logging import get_logger
 from app.deps.supabase import get_supabase_client, get_supabase_service_role_client
+
+logger = get_logger(__name__)
 from app.models.household import (
     HouseholdConvertToJoinableRequest,
     HouseholdJoinRequest,
@@ -14,7 +17,7 @@ from app.models.household import (
     HouseholdResponse,
 )
 from app.services.auth import get_current_user_id
-from app.services.house_hold_service import HouseholdService
+from app.services.household_service import HouseholdService
 from app.models.household import HouseholdCreateRequest
 
 # Initialize FastAPI APIRouter for household endpoints, with prefix '/households'
@@ -48,7 +51,9 @@ async def create_household(
     Returns:
         HouseholdResponse: Metadata about the newly created household
     """
-    return await household_service.create_household(body, user_id, supabase_admin)
+    result = await household_service.create_household(body, user_id)
+    logger.info("Household created", extra={"user_id": str(user_id), "household_id": str(result.id)})
+    return result
 
 
 # Redundant declaration: get_household_service already defined above.
@@ -83,11 +88,13 @@ async def join_household(
     Returns:
         HouseholdJoinResponse: Details about the join operation.
     """
-    return await household_service.join_household_by_invite(
+    result = await household_service.join_household_by_invite(
         body.invite_code,
         user_id,
         supabase_admin,
     )
+    logger.info("User joined household", extra={"user_id": str(user_id), "household_id": str(result.household.id), "items_moved": result.items_moved})
+    return result
 
 
 async def leave_household(
@@ -111,7 +118,9 @@ async def leave_household(
     Returns:
         HouseholdLeaveResponse: Info about items moved, new household, etc.
     """
-    return await household_service.leave_household(user_id, supabase_admin)
+    result = await household_service.leave_household(user_id, supabase_admin)
+    logger.info("User left household", extra={"user_id": str(user_id), "new_household_id": str(result.new_household_id), "items_moved": result.items_deleted})
+    return result
 
 
 async def convert_to_joinable(
@@ -138,11 +147,13 @@ async def convert_to_joinable(
         HouseholdResponse: Details about the updated/joinable household.
     """
     name = body.name if body else None
-    return await household_service.convert_personal_to_joinable(
+    result = await household_service.convert_personal_to_joinable(
         user_id,
         supabase_admin,
         name=name,
     )
+    logger.info("Household converted to joinable", extra={"user_id": str(user_id), "household_id": str(result.id)})
+    return result
 
 
 # Register endpoints with the router, wiring POST requests to handler functions.

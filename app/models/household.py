@@ -12,6 +12,9 @@ class HouseholdCreate(HouseholdBase):
     """Model for creating a household"""
     pass
 
+
+HouseholdCreateRequest = HouseholdCreate  # Alias for router request body
+
 class HouseholdUpdate(BaseModel):
     """Model for updating household"""
     name: Optional[str] = Field(None, min_length=1, max_length=100)

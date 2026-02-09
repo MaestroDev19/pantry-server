@@ -42,8 +42,8 @@ So we need a **join** flow that: (1) validates the invite and target household, 
   - **Resolve target household:** Query `households` by `invite_code` (normalize to uppercase). If not found or `is_personal` is true, return 400/404 (do not allow joining a “personal” household by code).
   - **Current membership:** Query `household_members` by `user_id`; get `household_id`. If already in this household, return 400 “Already in this household”.
   - **Migrate pantry items:** Using **service role** Supabase client:  
-    `update pantry_items set household_id = :new_id, updated_at = now() where household_id = :old_id and owner_id = :user_id`.  
-    Count updated rows for response if desired.
+  `update pantry_items set household_id = :new_id, updated_at = now() where household_id = :old_id and owner_id = :user_id`.  
+  Count updated rows for response if desired.
   - **Switch membership:** With same client: delete from `household_members` where `user_id = :user_id`; insert into `household_members` (`user_id`, `household_id`, `joined_at`) for the new household.
 - **Optional:** If the old household was personal (`is_personal = true`) and has no other members, you can delete that household row (or leave it for a future “return to personal” that reuses it). Prefer leaving it unless product explicitly wants to delete empty personal households.
 - Return a response that includes the new `household_id` and optionally number of items moved.
@@ -104,6 +104,8 @@ sequenceDiagram
   API->>Client: 200 + new household info
 ```
 
+
+
 ---
 
 ## Edge cases and notes
@@ -119,11 +121,13 @@ sequenceDiagram
 
 ## Files to add or change
 
+
 | File                                                                     | Action                                                                                                            |
 | ------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------- |
 | [app/services/house_hold_service.py](app/services/house_hold_service.py) | Add `join_household_by_invite`, optionally `leave_household`; use service role client for migration + membership. |
 | [app/routers/household.py](app/routers/household.py)                     | New router: `POST /join`, `POST /leave`; depend on `get_current_user_id` and service role client where needed.    |
 | [app/main.py](app/main.py)                                               | Register household router.                                                                                        |
 | [app/routers/**init**.py](app/routers/__init__.py)                       | Export `household_router` if you use a single export list.                                                        |
+
 
 No Supabase schema or migration is required for the core behavior; the fix is entirely in the FastAPI service and router plus using the existing service role client for the move and membership update.

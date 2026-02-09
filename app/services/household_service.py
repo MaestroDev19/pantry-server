@@ -7,24 +7,20 @@ from typing import List, Dict, Optional
 from uuid import UUID
 
 import anyio
-from fastapi import HTTPException, status
+from fastapi import status
 from supabase import Client
 
-from models.household import (
-    Household,
+from app.core.exceptions import AppError
+from app.core.logging import get_logger
+from app.models.household import (
     HouseholdCreate,
-    HouseholdUpdate,
     HouseholdResponse,
-    HouseholdListResponse,
-    HouseholdMember,
-    HouseholdMemberCreate,
-    HouseholdMemberUpdate,
-    HouseholdMemberResponse,
-    HouseholdMemberListResponse,
     HouseholdJoinResponse,
     HouseholdLeaveResponse,
 )
-from utils.date_time_styling import format_iso_datetime, format_iso_date, format_display_date
+from app.utils.date_time_styling import format_iso_datetime, format_iso_date, format_display_date
+
+logger = get_logger(__name__)
 
 
 def _iso_now() -> str:
@@ -56,8 +52,8 @@ class HouseholdService:
             HouseholdResponse - basic info about the new household.
 
         Raises:
-            HTTPException: 400 if user is already a member,
-                           500 if the household creation fails.
+            AppError: 400 if user is already a member,
+                      500 if the household creation fails.
         """
 
         # Step 1: Check membership - user should not already be part of any household.
@@ -71,10 +67,8 @@ class HouseholdService:
             )
         )
         if getattr(membership_response, "data", None):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="User is already a member of a household",
-            )
+            logger.error("Create household rejected: user already in a household", extra={"user_id": str(user_id)})
+            raise AppError("User is already a member of a household", status_code=status.HTTP_400_BAD_REQUEST)
 
         # Step 2: Create the household.
         household_response = await anyio.to_thread.run_sync(
@@ -87,10 +81,8 @@ class HouseholdService:
         )
         # Error if creation fails.
         if not getattr(household_response, "data", None):
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to create household",
-            )
+            logger.error("Failed to create household (no data from insert)", extra={"user_id": str(user_id)})
+            raise AppError("Failed to create household", status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
         # Step 3: Add the user to the household as an owner & member.
         await anyio.to_thread.run_sync(
@@ -107,13 +99,15 @@ class HouseholdService:
         )
 
         # Return the response model with new household details.
-        return HouseholdResponse(
+        out = HouseholdResponse(
             id=UUID(household_response.data[0]["id"]),
             name=household_response.data[0]["name"],
             created_at=household_response.data[0]["created_at"],
             invite_code=household_response.data[0]["invite_code"],
             is_personal=household_response.data[0]["is_personal"],
         )
+        logger.info("Household created", extra={"user_id": str(user_id), "household_id": str(out.id)})
+        return out
 
     async def join_household_by_invite(
         self,
@@ -138,15 +132,13 @@ class HouseholdService:
             HouseholdJoinResponse: Includes the new household info and number of items moved.
 
         Raises:
-            HTTPException: Various reasons (see inline error checks).
+            AppError: Various reasons (see inline error checks).
         """
         # Step 1: Sanitize and validate invite code.
         code = invite_code.upper().strip()
         if not code or len(code) != 6:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid invite code",
-            )
+            logger.error("Invalid invite code", extra={"user_id": str(user_id)})
+            raise AppError("Invalid invite code", status_code=status.HTTP_400_BAD_REQUEST)
 
         # Step 2: Fetch target household by invite code.
         target = await anyio.to_thread.run_sync(
@@ -159,17 +151,13 @@ class HouseholdService:
             )
         )
         if not getattr(target, "data", None) or len(target.data) == 0:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Household not found for this invite code",
-            )
+            logger.error("Household not found for invite code", extra={"user_id": str(user_id), "invite_code": code})
+            raise AppError("Household not found for this invite code", status_code=status.HTTP_404_NOT_FOUND)
         target_row = target.data[0]
         # Can't join a personal household via invite code.
         if target_row.get("is_personal"):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Cannot join a personal household via invite code",
-            )
+            logger.error("Cannot join personal household via invite", extra={"user_id": str(user_id)})
+            raise AppError("Cannot join a personal household via invite code", status_code=status.HTTP_400_BAD_REQUEST)
         new_household_id = UUID(target_row["id"])
 
         # Step 3: Get current household membership.
@@ -183,17 +171,13 @@ class HouseholdService:
             )
         )
         if not getattr(membership, "data", None) or len(membership.data) == 0:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="User is not in any household",
-            )
+            logger.error("Join household: user not in any household", extra={"user_id": str(user_id)})
+            raise AppError("User is not in any household", status_code=status.HTTP_400_BAD_REQUEST)
         old_household_id = UUID(membership.data[0]["household_id"])
         # Don't rejoin the same household.
         if old_household_id == new_household_id:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Already in this household",
-            )
+            logger.info("Join household: already in target household", extra={"user_id": str(user_id), "household_id": str(new_household_id)})
+            raise AppError("Already in this household", status_code=status.HTTP_400_BAD_REQUEST)
 
         # Step 4: Move all of user's pantry items to new household.
         updated = await anyio.to_thread.run_sync(
@@ -232,6 +216,7 @@ class HouseholdService:
         )
 
         # Pack household info + moved count as a response.
+        logger.info("User joined household", extra={"user_id": str(user_id), "new_household_id": str(new_household_id), "items_moved": items_moved})
         return HouseholdJoinResponse(
             household=HouseholdResponse(
                 id=new_household_id,
@@ -257,7 +242,7 @@ class HouseholdService:
           2. Create a new personal household (with unique invite code).
           3. Move all user's pantry items to new personal household.
           4. Remove user from their group and add as only member & owner of the new one.
-        
+
         Args:
             user_id (UUID): The user leaving their group.
             supabase_admin (Client): Admin Supabase client.
@@ -266,7 +251,7 @@ class HouseholdService:
             HouseholdLeaveResponse: Details of the switch and number of items moved.
 
         Raises:
-            HTTPException: 400/500 for various reasons.
+            AppError: 400/500 for various reasons.
         """
 
         # 1. Get current household id of the user.
@@ -280,10 +265,8 @@ class HouseholdService:
             )
         )
         if not getattr(membership, "data", None) or len(membership.data) == 0:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="User is not in any household",
-            )
+            logger.error("Leave household: user not in any household", extra={"user_id": str(user_id)})
+            raise AppError("User is not in any household", status_code=status.HTTP_400_BAD_REQUEST)
         current_household_id = UUID(membership.data[0]["household_id"])
 
         # 2. Make sure not already in a personal household.
@@ -297,10 +280,8 @@ class HouseholdService:
             )
         )
         if getattr(current, "data", None) and len(current.data) > 0 and current.data[0].get("is_personal"):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Already in personal household",
-            )
+            logger.error("Leave household: already in personal household", extra={"user_id": str(user_id)})
+            raise AppError("Already in personal household", status_code=status.HTTP_400_BAD_REQUEST)
 
         # Helper to generate a random 6-digit invite code
         def make_invite_code() -> str:
@@ -330,10 +311,8 @@ class HouseholdService:
                 break
         else:
             # Could not find a unique invite code after 5 tries.
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to create personal household",
-            )
+            logger.error("Leave household: failed to create personal household (invite code collision)", extra={"user_id": str(user_id)})
+            raise AppError("Failed to create personal household", status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
         personal_row = insert_resp.data[0]
         personal_household_id = UUID(personal_row["id"])
@@ -376,6 +355,7 @@ class HouseholdService:
         )
 
         # Return details about the switch.
+        logger.info("User left household", extra={"user_id": str(user_id), "new_household_id": str(personal_household_id), "items_moved": items_moved})
         return HouseholdLeaveResponse(
             message="Left household and switched to personal household",
             items_deleted=items_moved,
@@ -406,7 +386,7 @@ class HouseholdService:
             HouseholdResponse: Info about the now-joinable household
 
         Raises:
-            HTTPException: If user/ownership/household state invalid, or DB update fails.
+            AppError: If user/ownership/household state invalid, or DB update fails.
         """
 
         # 1. Look up user's household membership.
@@ -420,10 +400,8 @@ class HouseholdService:
             )
         )
         if not getattr(membership, "data", None) or len(membership.data) == 0:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="User is not in any household",
-            )
+            logger.error("Convert to joinable: user not in any household", extra={"user_id": str(user_id)})
+            raise AppError("User is not in any household", status_code=status.HTTP_400_BAD_REQUEST)
         household_id = UUID(membership.data[0]["household_id"])
 
         # 2. Fetch the household and check it's personal, and owned by this user.
@@ -437,21 +415,15 @@ class HouseholdService:
             )
         )
         if not getattr(household, "data", None) or len(household.data) == 0:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Household not found",
-            )
+            logger.error("Convert to joinable: household not found", extra={"user_id": str(user_id), "household_id": str(household_id)})
+            raise AppError("Household not found", status_code=status.HTTP_404_NOT_FOUND)
         row = household.data[0]
         if not row.get("is_personal"):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Household is already joinable; only personal households can be converted",
-            )
+            logger.error("Convert to joinable: household already joinable", extra={"user_id": str(user_id), "household_id": str(household_id)})
+            raise AppError("Household is already joinable; only personal households can be converted", status_code=status.HTTP_400_BAD_REQUEST)
         if str(row.get("owner_id")) != str(user_id):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Only the household owner can convert it to joinable",
-            )
+            logger.error("Convert to joinable: not owner", extra={"user_id": str(user_id), "household_id": str(household_id)})
+            raise AppError("Only the household owner can convert it to joinable", status_code=status.HTTP_403_FORBIDDEN)
 
         # 3. Form the update payload: is_personal->False, maybe update name.
         update_payload: Dict[str, object] = {"is_personal": False}
@@ -469,11 +441,10 @@ class HouseholdService:
             )
         )
         if not getattr(updated, "data", None) or len(updated.data) == 0:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to update household",
-            )
+            logger.error("Convert to joinable: update failed", extra={"user_id": str(user_id), "household_id": str(household_id)})
+            raise AppError("Failed to update household", status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
         out = updated.data[0]
+        logger.info("Household converted to joinable", extra={"user_id": str(user_id), "household_id": str(household_id)})
         # Return the joinable household info as a response model.
         return HouseholdResponse(
             id=UUID(out["id"]),
@@ -482,4 +453,3 @@ class HouseholdService:
             invite_code=out["invite_code"],
             is_personal=out["is_personal"],
         )
-
