@@ -9,8 +9,8 @@ class HouseholdBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
 
 class HouseholdCreate(HouseholdBase):
-    """Model for creating a household"""
-    pass
+    """Model for creating a household."""
+    is_personal: bool = False
 
 
 HouseholdCreateRequest = HouseholdCreate  # Alias for router request body

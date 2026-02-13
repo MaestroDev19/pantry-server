@@ -81,7 +81,6 @@ class PantryService:
                 lambda: (
                     self.supabase.table("pantry_items")
                         .upsert(data)
-                        .select("*")
                         .execute()
                 )
             )
@@ -207,7 +206,6 @@ class PantryService:
                 lambda: (
                     self.supabase.table("pantry_items")
                         .upsert(rows_to_upsert)
-                        .select("*")
                         .execute()
                 )
             )

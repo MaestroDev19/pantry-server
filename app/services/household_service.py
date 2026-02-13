@@ -9,6 +9,7 @@ from uuid import UUID
 import anyio
 from fastapi import status
 from supabase import Client
+from postgrest.exceptions import APIError
 
 from app.core.exceptions import AppError
 from app.core.logging import get_logger
@@ -35,7 +36,12 @@ class HouseholdService:
         # Store the Supabase database client for later use in data operations.
         self.supabase = supabase
 
-    async def create_household(self, household: HouseholdCreate, user_id: UUID) -> HouseholdResponse:
+    async def create_household(
+        self,
+        household: HouseholdCreate,
+        user_id: UUID,
+        supabase_admin: Optional[Client] = None,
+    ) -> HouseholdResponse:
         """
         Create a new household.
 
@@ -44,9 +50,13 @@ class HouseholdService:
           2. Create a new household using input data.
           3. Add the user as the owner and member of this new household.
 
+        Uses supabase_admin (service role) when provided so that inserts bypass RLS;
+        otherwise uses the anon client (requires RLS policies allowing insert).
+
         Args:
             household: HouseholdCreate - data for the new household.
             user_id: UUID - the user creating the household.
+            supabase_admin: Optional service-role client for privileged inserts.
 
         Returns:
             HouseholdResponse - basic info about the new household.
@@ -55,11 +65,13 @@ class HouseholdService:
             AppError: 400 if user is already a member,
                       500 if the household creation fails.
         """
+        client = supabase_admin if supabase_admin is not None else self.supabase
+        is_personal = bool(getattr(household, "is_personal", False))
 
         # Step 1: Check membership - user should not already be part of any household.
         membership_response = await anyio.to_thread.run_sync(
             lambda: (
-                self.supabase.table("household_members")
+                client.table("household_members")
                     .select("id")
                     .eq("user_id", str(user_id))
                     .limit(1)
@@ -70,33 +82,107 @@ class HouseholdService:
             logger.error("Create household rejected: user already in a household", extra={"user_id": str(user_id)})
             raise AppError("User is already a member of a household", status_code=status.HTTP_400_BAD_REQUEST)
 
-        # Step 2: Create the household.
-        household_response = await anyio.to_thread.run_sync(
-            lambda: (
-                self.supabase.table("households")
-                .insert(household.model_dump())
-                .select("*")
-                .execute()
+        # If creating a personal household, reuse an existing one for this owner when present.
+        if is_personal:
+            existing_personal = await anyio.to_thread.run_sync(
+                lambda: (
+                    client.table("households")
+                    .select("id, name, invite_code, is_personal, created_at")
+                    .eq("owner_id", str(user_id))
+                    .eq("is_personal", True)
+                    .limit(1)
+                    .execute()
+                )
             )
-        )
+            if getattr(existing_personal, "data", None):
+                row = existing_personal.data[0]
+                logger.info(
+                    "Reusing existing personal household for user",
+                    extra={"user_id": str(user_id), "household_id": row["id"]},
+                )
+                return HouseholdResponse(
+                    id=UUID(row["id"]),
+                    name=row["name"],
+                    created_at=row["created_at"],
+                    invite_code=row["invite_code"],
+                    is_personal=row.get("is_personal", False),
+                )
+
+        # Step 2: Build insert payload (invite_code required by DB; optional is_personal/owner_id).
+        def make_invite_code() -> str:
+            return "".join(secrets.choice(string.ascii_uppercase + string.digits) for _ in range(6))
+
+        payload: Dict[str, object] = {
+            "name": household.name,
+            "invite_code": make_invite_code(),
+        }
+        if is_personal:
+            payload["is_personal"] = True
+            payload["owner_id"] = str(user_id)
+
+        try:
+            household_response = await anyio.to_thread.run_sync(
+                lambda: (
+                    client.table("households")
+                    .insert(payload)
+                    .execute()
+                )
+            )
+        except APIError as exc:
+            details = exc.args[0] if exc.args else {}
+            code = details.get("code") if isinstance(details, dict) else None
+
+            # Unique violation on personal-owner constraint: fetch and return existing household.
+            if code == "23505" and is_personal:
+                existing = await anyio.to_thread.run_sync(
+                    lambda: (
+                        client.table("households")
+                        .select("id, name, invite_code, is_personal, created_at")
+                        .eq("owner_id", str(user_id))
+                        .eq("is_personal", True)
+                        .limit(1)
+                        .execute()
+                    )
+                )
+                if getattr(existing, "data", None):
+                    row = existing.data[0]
+                    logger.info(
+                        "Personal household unique constraint hit, reusing existing",
+                        extra={"user_id": str(user_id), "household_id": row["id"]},
+                    )
+                    return HouseholdResponse(
+                        id=UUID(row["id"]),
+                        name=row["name"],
+                        created_at=row["created_at"],
+                        invite_code=row["invite_code"],
+                        is_personal=row.get("is_personal", False),
+                    )
+
+            logger.error(
+                "Failed to create household (APIError)",
+                extra={"user_id": str(user_id), "error": details},
+            )
+            raise AppError("Failed to create household", status_code=status.HTTP_500_INTERNAL_SERVER_ERROR) from exc
+
         # Error if creation fails.
         if not getattr(household_response, "data", None):
             logger.error("Failed to create household (no data from insert)", extra={"user_id": str(user_id)})
             raise AppError("Failed to create household", status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
         # Step 3: Add the user to the household as an owner & member.
-        await anyio.to_thread.run_sync(
-            lambda: (
-                self.supabase.table("household_members")
-                .insert({
-                    "user_id": str(user_id),
-                    "household_id": str(household_response.data[0]["id"]),
-                    "joined_at": format_iso_datetime(value=datetime.now()),
-                })
-                .select("*")
-                .execute()
+        # Skip when is_personal: the DB trigger household_after_insert_member_trigger adds the owner.
+        if not is_personal:
+            await anyio.to_thread.run_sync(
+                lambda: (
+                    client.table("household_members")
+                    .insert({
+                        "user_id": str(user_id),
+                        "household_id": str(household_response.data[0]["id"]),
+                        "joined_at": format_iso_datetime(value=datetime.now()),
+                    })
+                    .execute()
+                )
             )
-        )
 
         # Return the response model with new household details.
         out = HouseholdResponse(
@@ -301,7 +387,6 @@ class HouseholdService:
                             "is_personal": True,
                             "owner_id": str(user_id),
                         })
-                        .select("id, name, invite_code, created_at")
                         .execute()
                     )
                 )
@@ -436,7 +521,6 @@ class HouseholdService:
                 supabase_admin.table("households")
                 .update(update_payload)
                 .eq("id", str(household_id))
-                .select("id, name, invite_code, is_personal, created_at")
                 .execute()
             )
         )

@@ -523,3 +523,8 @@ mypy app/
 ## Support
 
 For issues and questions, please open an issue in the repository.
+
+## Recent Updates
+
+- Added migration `20260213000000_households_household_members_trigger.sql` to keep `households` and `household_members` in sync at the database level.
+- When setting up a new environment, ensure all Supabase migrations in `server/supabase/migrations/` are applied (for example via the Supabase CLI or Studio) before running the API.

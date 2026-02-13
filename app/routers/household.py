@@ -51,18 +51,9 @@ async def create_household(
     Returns:
         HouseholdResponse: Metadata about the newly created household
     """
-    result = await household_service.create_household(body, user_id)
+    result = await household_service.create_household(body, user_id, supabase_admin=supabase_admin)
     logger.info("Household created", extra={"user_id": str(user_id), "household_id": str(result.id)})
     return result
-
-
-# Redundant declaration: get_household_service already defined above.
-def get_household_service(supabase: Client = Depends(get_supabase_client)) -> HouseholdService:
-    """
-    Dependency provider for HouseholdService.
-    Returns a HouseholdService instance using the provided Supabase client.
-    """
-    return HouseholdService(supabase)
 
 
 async def join_household(
