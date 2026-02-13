@@ -116,7 +116,7 @@ def setup_exception_handlers(app: FastAPI) -> None:
         the error message is revealed in the response for debugging purposes.
         Otherwise, a generic error message is shown to the client.
         """
-        logger.error(f"Unexpected error: {exc}", exc_info=True)
+        logger.error("Unexpected error: %s", exc, exc_info=True)
         return JSONResponse(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             content={

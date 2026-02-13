@@ -1,10 +1,12 @@
-from typing import List, Dict, Optional
-from uuid import UUID
+from __future__ import annotations
+
 from datetime import datetime
-from app.utils.date_time_styling import format_iso_datetime, format_iso_date, format_display_date
-import anyio  # Library providing asynchronous concurrency primitives and utilities for running sync code in threads
+from typing import Any, Dict, List, Optional
+from uuid import UUID
+
+import anyio
 from fastapi import status
-from supabase import Client  # Supabase client for Postgres operations
+from supabase import Client
 
 from app.core.exceptions import AppError
 from app.core.logging import get_logger
@@ -17,10 +19,62 @@ from app.models.pantry import (
     PantryItemsBulkCreateRequest,
     PantryItemsBulkCreateResponse,
     BulkUpsertResult,
-)  # Collection of Pydantic models for data validation and serialization for pantry operations
+)
+from app.utils.date_time_styling import format_iso_date, format_iso_datetime
 from app.utils.embedding import embeddings_client
 
 logger = get_logger(__name__)
+
+
+async def _ensure_user_in_household(
+    supabase: Client, user_id: UUID, household_id: UUID, operation: str
+) -> None:
+    membership_response = await anyio.to_thread.run_sync(
+        lambda: (
+            supabase.table("household_members")
+            .select("id")
+            .eq("user_id", str(user_id))
+            .eq("household_id", str(household_id))
+            .limit(1)
+            .execute()
+        )
+    )
+    if not getattr(membership_response, "data", None):
+        logger.error(
+            f"{operation}: user not in household",
+            extra={"household_id": str(household_id), "user_id": str(user_id)},
+        )
+        raise AppError(
+            "User is not a member of the specified household",
+            status_code=status.HTTP_403_FORBIDDEN,
+        )
+
+
+def _embedding_content_for_row(row: Dict[str, Any]) -> str:
+    name = row.get("name") or ""
+    category = row.get("category") or ""
+    return f"{name} {category}".strip()
+
+
+def _embedding_metadata_for_row(row: Dict[str, Any]) -> Dict[str, Optional[str]]:
+    name = row.get("name") or ""
+    category = row.get("category") or ""
+    expiry_raw = row.get("expiry_date")
+    return {
+        "pantry_item_id": str(row["id"]) if row.get("id") is not None else None,
+        "name": name or None,
+        "category": category or None,
+        "quantity": str(row["quantity"]) if row.get("quantity") is not None else None,
+        "unit": row.get("unit"),
+        "expiry_date": (
+            format_iso_date(value=expiry_raw) if expiry_raw is not None else None
+        ),
+        "owner_id": str(row["owner_id"]) if row.get("owner_id") is not None else None,
+        "household_id": (
+            str(row["household_id"]) if row.get("household_id") is not None else None
+        ),
+        "expiry_visible": row.get("expiry_visible"),
+    }
 
 
 class PantryService:
@@ -50,33 +104,20 @@ class PantryService:
         Returns:
             PantryItemUpsertResponse: Contains item id, success/failure, quantities, and embedding status.
         """
-        # --- Verify user is in the household; enforce RLS before making data changes
-        membership_response = await anyio.to_thread.run_sync(
-            lambda: (
-                self.supabase.table("household_members")
-                    .select("id")
-                    .eq("user_id", str(user_id))
-                    .eq("household_id", str(household_id))
-                    .limit(1)
-                    .execute()
-            )
+        await _ensure_user_in_household(
+            self.supabase, user_id, household_id, "Add pantry item"
         )
-        # If user is not in the household, abort with HTTP 403 Forbidden to prevent unauthorized inserts
-        if not getattr(membership_response, "data", None):
-            logger.error("Add pantry item: user not in household", extra={"household_id": str(household_id), "user_id": str(user_id)})
-            raise AppError("User is not a member of the specified household", status_code=status.HTTP_403_FORBIDDEN)
 
-        # --- Build dictionary for upserting pantry item with current creation/updated dates and related fields
         data = pantry_item.model_dump()
-        data["household_id"] = str(household_id)  # Always tie item to a household
-        data["owner_id"] = str(user_id)           # Always record owner
-        data["created_at"] = format_iso_datetime(value=datetime.now())    # Creation timestamp
-        data["updated_at"] = format_iso_datetime(value=datetime.now())    # Last update timestamp
-        data["expiry_date"] = format_iso_date(value=data["expiry_date"]) if data["expiry_date"] else None  # Normalize date or null if not set
+        data["household_id"] = str(household_id)
+        data["owner_id"] = str(user_id)
+        data["created_at"] = format_iso_datetime(value=datetime.now())
+        data["updated_at"] = format_iso_datetime(value=datetime.now())
+        data["expiry_date"] = (
+            format_iso_date(value=data["expiry_date"]) if data["expiry_date"] else None
+        )
 
         try:
-            # Upsert (insert or update) into the pantry_items table.
-            # This operation must select and return the whole row for further processing.
             response = await anyio.to_thread.run_sync(
                 lambda: (
                     self.supabase.table("pantry_items")
@@ -88,51 +129,24 @@ class PantryService:
             logger.error("Failed to create pantry item (db/network)", exc_info=True, extra={"household_id": str(household_id)})
             raise AppError("Failed to create pantry item", status_code=status.HTTP_502_BAD_GATEWAY) from exc
 
-        # If upsert fails to return a valid data response, return an internal error; item creation failed.
         if not getattr(response, "data", None):
             logger.error("Pantry item upsert returned no data", extra={"household_id": str(household_id)})
             raise AppError("Pantry item was not created", status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-        # Grab the item dictionary (row) returned from database upsert. We expect exactly one row.
         row = response.data[0]
         logger.debug("Pantry item upserted", extra={"item_id": row.get("id"), "household_id": str(household_id)})
 
-        # --- Try to generate semantic embedding and insert into 'pantry_embeddings' table
-        embedding_generated = False  # Track embedding status so it can be reported to the UI
+        embedding_generated = False
         try:
-            # Compose the textual content to embed, typically item name and category.
-            name = row.get("name") or ""
-            category = row.get("category") or ""
-            content = f"{name} {category}".strip()  # E.g., "Milk Dairy"
+            content = _embedding_content_for_row(row)
+            metadata = _embedding_metadata_for_row(row)
 
-            # Metadata for the embedding entry, mirroring the DB trigger logic.
-            metadata: Dict[str, Optional[str]] = {
-                "pantry_item_id": str(row.get("id")) if row.get("id") is not None else None,
-                "name": name or None,
-                "category": category or None,
-                "quantity": str(row.get("quantity")) if row.get("quantity") is not None else None,
-                "unit": row.get("unit"),
-                "expiry_date": (
-                    format_iso_date(value=row.get("expiry_date"))
-                    if row.get("expiry_date") is not None
-                    else None
-                ),
-                "owner_id": str(row.get("owner_id")) if row.get("owner_id") is not None else None,
-                "household_id": (
-                    str(row.get("household_id")) if row.get("household_id") is not None else None
-                ),
-                "expiry_visible": row.get("expiry_visible"),
-            }
-
-            # Generate dense embedding vector with the embedding client (blocking, so run in thread)
             embeddings: List[List[float]] = await anyio.to_thread.run_sync(
                 lambda: self.embeddings_client.embed_documents([content])
             )
             # Pick the embedding for this one item, or None if failed
             embedding_vector = embeddings[0] if embeddings else None
-
             if embedding_vector is not None:
-                # Insert or update the embedding record for this item, with current creation time.
                 await anyio.to_thread.run_sync(
                     lambda: (
                         self.supabase.table("pantry_embeddings")
@@ -148,20 +162,18 @@ class PantryService:
                             .execute()
                     )
                 )
-                embedding_generated = True  # Mark success for response payload
+                embedding_generated = True
         except Exception:
-            # On any failure in embedding, just record status as false; do not abort entire item creation
             embedding_generated = False
 
-        # Compose and return the response, reflecting upsert result and embedding status
         logger.info("Pantry item added", extra={"item_id": row.get("id"), "household_id": str(household_id), "embedding_generated": embedding_generated})
         return PantryItemUpsertResponse(
-            id=row["id"],                   # Assigned or detected item id
-            is_new=True,                    # This interface is only for new inserts, always true
-            old_quantity=0,                 # There was no previous quantity for a new insert
-            new_quantity=float(row.get("quantity") or 0),  # The quantity provided, coerced to float
-            message="Pantry item added successfully",      # UX message for client
-            embedding_generated=embedding_generated,       # Did we successfully store an embedding?
+            id=row["id"],
+            is_new=True,
+            old_quantity=0,
+            new_quantity=float(row.get("quantity") or 0),
+            message="Pantry item added successfully",
+            embedding_generated=embedding_generated,
         )
 
     async def add_pantry_item_bulk(
@@ -174,23 +186,11 @@ class PantryService:
         Bulk insert pantry items for a household/user and generate embeddings in batch. 
         Reports counts and per-item bulk status.
         """
-        # ----- 1. Membership Check: Only allow bulk upsert if user is in household.
-        membership_response = await anyio.to_thread.run_sync(
-            lambda: (
-                self.supabase.table("household_members")
-                    .select("id")
-                    .eq("user_id", str(user_id))
-                    .eq("household_id", str(household_id))
-                    .limit(1)
-                    .execute()
-            )
+        await _ensure_user_in_household(
+            self.supabase, user_id, household_id, "Bulk add"
         )
-        if not getattr(membership_response, "data", None):
-            logger.error("Bulk add: user not in household", extra={"household_id": str(household_id), "user_id": str(user_id)})
-            raise AppError("User is not a member of the specified household", status_code=status.HTTP_403_FORBIDDEN)
 
-        # ----- 2. Prepare Bulk Upsert Data: Augment each item with core fields
-        rows_to_upsert: List[Dict[str, object]] = []  # Will contain a dict per row to insert
+        rows_to_upsert: List[Dict[str, object]] = []
         for item in pantry_items:
             data = item.model_dump()
             data["household_id"] = str(household_id)
@@ -200,7 +200,6 @@ class PantryService:
             data["expiry_date"] = format_iso_date(value=data["expiry_date"]) if data["expiry_date"] else None
             rows_to_upsert.append(data)
 
-        # ----- 3. Perform Bulk Upsert in Pantry Table
         try:
             response = await anyio.to_thread.run_sync(
                 lambda: (
@@ -213,50 +212,19 @@ class PantryService:
             logger.error("Bulk pantry create failed (db/network)", exc_info=True, extra={"household_id": str(household_id), "count": len(pantry_items)})
             raise AppError("Failed to create pantry items", status_code=status.HTTP_502_BAD_GATEWAY) from exc
 
-        # If the upsert was not successful (e.g. returns no data), treat as an error.
         if not getattr(response, "data", None):
             logger.error("Bulk pantry upsert returned no data", extra={"household_id": str(household_id)})
             raise AppError("Pantry items were not created", status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-        created_rows: List[Dict] = list(response.data)  # All upserted rows; each a dict
+        created_rows: List[Dict[str, Any]] = list(response.data)
 
-        # ----- 4. Prepare Embedding Inputs: For each row, build the text to embed and associated metadata.
-        contents: List[str] = []  # Text like "Milk Dairy" for each item
+        contents: List[str] = []
         metadatas: List[Dict[str, Optional[str]]] = []
         for row in created_rows:
-            name = row.get("name") or ""
-            category = row.get("category") or ""
-            content = f"{name} {category}".strip()
-            contents.append(content)
+            contents.append(_embedding_content_for_row(row))
+            metadatas.append(_embedding_metadata_for_row(row))
 
-            # Compose matching metadata as in the single upsert
-            metadata: Dict[str, Optional[str]] = {
-                "pantry_item_id": str(row.get("id")) if row.get("id") is not None else None,
-                "name": name or None,
-                "category": category or None,
-                "quantity": str(row.get("quantity"))
-                if row.get("quantity") is not None
-                else None,
-                "unit": row.get("unit"),
-                "expiry_date": (
-                    format_iso_date(value=row.get("expiry_date"))
-                    if row.get("expiry_date") is not None
-                    else None
-                ),
-                "owner_id": str(row.get("owner_id"))
-                if row.get("owner_id") is not None
-                else None,
-                "household_id": (
-                    str(row.get("household_id"))
-                    if row.get("household_id") is not None
-                    else None
-                ),
-                "expiry_visible": row.get("expiry_visible"),
-            }
-            metadatas.append(metadata)
-
-        # ----- 5. Generate All Embeddings in a Batch and Upsert Embedding Records
-        embeddings_queued = 0  # Keep count of successful embedding records
+        embeddings_queued = 0
         try:
             # Batch vectorize all item texts (blocking, so done in threadpool)
             embeddings: List[List[float]] = await anyio.to_thread.run_sync(
@@ -268,7 +236,7 @@ class PantryService:
                 created_rows, contents, metadatas, embeddings
             ):
                 if not embedding_vector:
-                    continue  # skip if embedding empty/faulty
+                    continue
                 embedding_rows.append(
                     {
                         "pantry_item_id": row["id"],
@@ -278,7 +246,6 @@ class PantryService:
                     }
                 )
 
-            # If we generated any valid embeddings, upsert them in a separate call
             if embedding_rows:
                 await anyio.to_thread.run_sync(
                     lambda: (
@@ -289,10 +256,8 @@ class PantryService:
                 )
                 embeddings_queued = len(embedding_rows)
         except Exception:
-            # Fail quietly with zero embeddings; do not fail the whole batch on embedding error.
             embeddings_queued = 0
 
-        # ----- 6. Compile BulkUpsertResult for each created item (all treated as new in this API)
         bulk_results: List[BulkUpsertResult] = []
         for row in created_rows:
             bulk_results.append(
@@ -307,18 +272,16 @@ class PantryService:
                 )
             )
 
-        # Tally summary counts for the response payload.
         total_requested = len(pantry_items)
         successful = len(bulk_results)
         failed = total_requested - successful
 
-        # Return a bulk create response containing results and summary
         logger.info("Bulk pantry items added", extra={"household_id": str(household_id), "successful": successful, "total": total_requested, "embeddings_queued": embeddings_queued})
         return PantryItemsBulkCreateResponse(
             total_requested=total_requested,
             successful=successful,
             failed=failed,
-            new_items=successful,  # Bulk API only used for creation; no updates
+            new_items=successful,
             updated_items=0,
             results=bulk_results,
             embeddings_queued=embeddings_queued,

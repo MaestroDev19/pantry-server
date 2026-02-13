@@ -66,13 +66,13 @@ async def get_current_user(
 
     except AppError:
         raise
-    except Exception as e:
+    except Exception as exc:
         logger.error("Could not validate credentials", exc_info=True)
         raise AppError(
             "Could not validate credentials",
             status_code=status.HTTP_401_UNAUTHORIZED,
             headers={"WWW-Authenticate": "Bearer"},
-        ) from e
+        ) from exc
         
 async def get_current_user_id(
     user: User = Depends(get_current_user),

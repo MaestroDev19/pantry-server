@@ -3,9 +3,13 @@ from __future__ import annotations
 import logging
 import sys
 
+PRODUCTION_ENV_VALUES = frozenset({"prod", "production"})
+
 
 def configure_logging(*, app_env: str) -> None:
-    log_level = logging.INFO if app_env.lower() in {"prod", "production"} else logging.DEBUG
+    log_level = (
+        logging.INFO if app_env.lower() in PRODUCTION_ENV_VALUES else logging.DEBUG
+    )
 
     root_logger = logging.getLogger()
     root_logger.setLevel(log_level)

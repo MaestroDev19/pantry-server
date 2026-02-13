@@ -7,9 +7,8 @@ from supabase import Client
 
 from app.core.logging import get_logger
 from app.deps.supabase import get_supabase_client, get_supabase_service_role_client
-
-logger = get_logger(__name__)
 from app.models.household import (
+    HouseholdCreateRequest,
     HouseholdConvertToJoinableRequest,
     HouseholdJoinRequest,
     HouseholdJoinResponse,
@@ -18,10 +17,8 @@ from app.models.household import (
 )
 from app.services.auth import get_current_user_id
 from app.services.household_service import HouseholdService
-from app.models.household import HouseholdCreateRequest
 
-# Initialize FastAPI APIRouter for household endpoints, with prefix '/households'
-# All endpoints in this router will be tagged as 'households' in FastAPI documentation
+logger = get_logger(__name__)
 router: APIRouter = APIRouter(prefix="/households", tags=["households"])
 
 def get_household_service(supabase: Client = Depends(get_supabase_client)) -> HouseholdService:
@@ -147,15 +144,11 @@ async def convert_to_joinable(
     return result
 
 
-# Register endpoints with the router, wiring POST requests to handler functions.
-# Each has an explicit response model for FastAPI OpenAPI docs.
-
 router.post("/join", response_model=HouseholdJoinResponse)(join_household)
 router.post("/leave", response_model=HouseholdLeaveResponse)(leave_household)
 router.post("/create", response_model=HouseholdResponse)(create_household)
 router.post("/convert-to-joinable", response_model=HouseholdResponse)(convert_to_joinable)
 
-# This controls what names get exported from this module (e.g., for import *)
 __all__ = [
     "router",
     "join_household",

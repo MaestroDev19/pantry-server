@@ -1,25 +1,24 @@
-from fastapi import APIRouter, Depends, status
+from __future__ import annotations
+
 from uuid import UUID
-from typing import List
+
+from fastapi import APIRouter, Depends, status
+from supabase import Client
 
 from app.core.exceptions import AppError
 from app.core.logging import get_logger
 from app.deps.supabase import get_supabase_client
-
-logger = get_logger(__name__)
-from app.services.auth import get_current_household_id, get_current_user_id
-from app.services.pantry_service import PantryService
 from app.models.pantry import (
+    PantryItem,
     PantryItemUpsert,
     PantryItemUpsertResponse,
-    PantryItem,
     PantryItemsBulkCreateRequest,
     PantryItemsBulkCreateResponse,
 )
-from supabase import Client
+from app.services.auth import get_current_household_id, get_current_user_id
+from app.services.pantry_service import PantryService
 
-# Initialize the APIRouter for pantry-related endpoints,
-# with all routes prefixed by '/pantry' and tagged 'pantry'
+logger = get_logger(__name__)
 router: APIRouter = APIRouter(prefix="/pantry", tags=["pantry"])
 
 def get_pantry_service(supabase: Client = Depends(get_supabase_client)) -> PantryService:
@@ -32,9 +31,9 @@ def get_pantry_service(supabase: Client = Depends(get_supabase_client)) -> Pantr
 async def add_single_pantry_item(
     *,
     pantry_item: PantryItemUpsert,
-    household_id: UUID = Depends(get_current_household_id),  # The household for which to add the item, resolved from auth
-    user_id: UUID = Depends(get_current_user_id),            # The acting user, resolved from auth
-    pantry_service: PantryService = Depends(get_pantry_service),  # PantryService instance for business logic
+    household_id: UUID = Depends(get_current_household_id),
+    user_id: UUID = Depends(get_current_user_id),
+    pantry_service: PantryService = Depends(get_pantry_service),
 ) -> PantryItemUpsertResponse:
     """
     Add a single item to the user's household pantry.
@@ -50,10 +49,10 @@ async def add_single_pantry_item(
 
 async def add_multiple_pantry_items(
     *,
-    pantry_items: PantryItemsBulkCreateRequest,                   # Request model with list of items to add
-    household_id: UUID = Depends(get_current_household_id),       # Household context from auth
-    user_id: UUID = Depends(get_current_user_id),                 # User context from auth
-    pantry_service: PantryService = Depends(get_pantry_service),  # Injected pantry service
+    pantry_items: PantryItemsBulkCreateRequest,
+    household_id: UUID = Depends(get_current_household_id),
+    user_id: UUID = Depends(get_current_user_id),
+    pantry_service: PantryService = Depends(get_pantry_service),
 ) -> PantryItemsBulkCreateResponse:
     """
     Add multiple pantry items in a single request for the user's household.
@@ -73,9 +72,9 @@ async def add_multiple_pantry_items(
 
 async def get_all_pantry_items(
     *,
-    household_id: UUID = Depends(get_current_household_id),       # Get household context from auth
-    pantry_service: PantryService = Depends(get_pantry_service),  # PantryService dependency
-) -> List[PantryItem]:
+    household_id: UUID = Depends(get_current_household_id),
+    pantry_service: PantryService = Depends(get_pantry_service),
+) -> list[PantryItem]:
     """
     Fetch all pantry items belonging to the current user's household.
     - Returns an empty list if query fails or no items found.
@@ -89,10 +88,10 @@ async def get_all_pantry_items(
 
 async def get_my_pantry_items(
     *,
-    user_id: UUID = Depends(get_current_user_id),                 # User who made the request
-    household_id: UUID = Depends(get_current_household_id),       # User's household
-    pantry_service: PantryService = Depends(get_pantry_service),  # PantryService dependency
-) -> List[PantryItem]:
+    user_id: UUID = Depends(get_current_user_id),
+    household_id: UUID = Depends(get_current_household_id),
+    pantry_service: PantryService = Depends(get_pantry_service),
+) -> list[PantryItem]:
     """
     Fetch pantry items for the current user in their household.
     - Delegates to pantry_service method to scope by user.
@@ -107,10 +106,10 @@ async def get_my_pantry_items(
 
 async def update_pantry_item(
     *,
-    pantry_item: PantryItemUpsert,                                # Item data to update (must include primary key/id)
-    household_id: UUID = Depends(get_current_household_id),       # Household constraint
-    user_id: UUID = Depends(get_current_user_id),                 # User performing the update
-    pantry_service: PantryService = Depends(get_pantry_service),  # PantryService business logic
+    pantry_item: PantryItemUpsert,
+    household_id: UUID = Depends(get_current_household_id),
+    user_id: UUID = Depends(get_current_user_id),
+    pantry_service: PantryService = Depends(get_pantry_service),
 ) -> PantryItemUpsertResponse:
     """
     Update an existing pantry item.
@@ -126,10 +125,10 @@ async def update_pantry_item(
 
 async def delete_pantry_item(
     *,
-    item_id: UUID,                                                # UUID of the item to delete (from request param/query)
-    household_id: UUID = Depends(get_current_household_id),       # Household for scoping
-    user_id: UUID = Depends(get_current_user_id),                 # User context
-    pantry_service: PantryService = Depends(get_pantry_service),  # Pantry business logic
+    item_id: UUID,
+    household_id: UUID = Depends(get_current_household_id),
+    user_id: UUID = Depends(get_current_user_id),
+    pantry_service: PantryService = Depends(get_pantry_service),
 ) -> PantryItemUpsertResponse:
     """
     Delete a pantry item identified by item_id in the user's household.
@@ -142,35 +141,30 @@ async def delete_pantry_item(
     logger.info("Pantry item deleted", extra={"item_id": str(item_id), "household_id": str(household_id)})
     return result
 
-# --- FastAPI Route Registrations ---
-# Register each function as a route in the /pantry group
-
 router.post(
     "/add_item", response_model=PantryItemUpsertResponse
-)(add_single_pantry_item)  # POST /pantry/add_item
+)(add_single_pantry_item)
 
 router.post(
     "/bulk_add", response_model=PantryItemsBulkCreateResponse
-)(add_multiple_pantry_items)  # POST /pantry/bulk_add
+)(add_multiple_pantry_items)
 
 router.get(
-    "/get_household_items", response_model=List[PantryItem]
-)(get_all_pantry_items)  # GET /pantry/get_household_items
+    "/get_household_items", response_model=list[PantryItem]
+)(get_all_pantry_items)
 
 router.get(
-    "/get_my_items", response_model=List[PantryItem]
-)(get_my_pantry_items)  # GET /pantry/get_my_items
+    "/get_my_items", response_model=list[PantryItem]
+)(get_my_pantry_items)
 
 router.put(
     "/update_item", response_model=PantryItemUpsertResponse
-)(update_pantry_item)  # PUT /pantry/update_item
+)(update_pantry_item)
 
 router.delete(
     "/delete_item", response_model=PantryItemUpsertResponse
-)(delete_pantry_item)  # DELETE /pantry/delete_item
+)(delete_pantry_item)
 
-# __all__ allows for explicit re-export of the router and API route callables,
-# simplifying imports and discoverability when using `from ... import *`
 __all__ = [
     "router",
     "add_single_pantry_item",
