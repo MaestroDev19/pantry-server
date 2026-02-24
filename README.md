@@ -73,6 +73,7 @@ Pantry Server is a modern, scalable backend API built with FastAPI that enables 
 - ✅ Supabase client service (anon and service role) in `app/deps/`
 - ✅ Gemini AI client with LRU caching in `app/deps/`
 - ✅ Embeddings client for vector operations in `app/utils/`
+- ✅ Supabase-backed vector store, retriever cache, and LangChain tools for pantry RAG flows in `app/ai/`
 - ✅ Unit and integration test layout in `tests/` (unit + integration, pytest)
 
 #### Utilities
@@ -88,7 +89,6 @@ Pantry Server is a modern, scalable backend API built with FastAPI that enables 
 - ⏳ **Recipe Generation**: AI-powered recipe generation from pantry items
 - ⏳ **Shopping List Generation**: Automatic list creation based on pantry state
 - ⏳ **Background Workers**: Embedding generation and batch processing
-- ⏳ **Rate Limiting**: API rate limiting middleware
 - ⏳ **CORS Configuration**: Cross-origin resource sharing setup
 
 ## Tech Stack
@@ -248,8 +248,11 @@ app/
 │   ├── formatters.py         # Response formatting utilities
 │   └── validators.py         # Input validation helpers
 │
-└── ai/                        # AI and vector store integration
-    └── vector_store.py        # Vector store for semantic search
+└── ai/                        # AI and vector store + RAG integration
+    ├── vector_store.py        # SupabaseVectorStore wrapper for pantry embeddings
+    ├── retriever_cache.py     # In-memory retrieval cache keyed by household + query
+    ├── retriver.py            # LangChain tool for retrieving pantry items from the vector store
+    └── prompts.py             # Structured prompts for recipe generation from pantry + preferences
 
 tests/                         # Unit and integration tests
 ├── conftest.py                # Shared fixtures (app, client, test_settings)
@@ -354,15 +357,14 @@ FastAPI dependencies for:
 
 #### Application Configuration
 
-| Variable    | Description         | Default         |
-| ----------- | ------------------- | --------------- |
-| `APP_ENV`   | Runtime environment | `development`   |
-| `APP_NAME`  | Application name    | `pantry-server` |
-| `PORT`      | Server port         | `8000`          |
-| `HOST`      | Server host         | `0.0.0.0`       |
-| `RELOAD`    | Enable auto-reload  | `True`          |
-| `DEBUG`     | Debug mode          | `False`         |
-| `LOG_LEVEL` | Logging level       | `INFO`          |
+| Variable    | Description                            | Default         |
+| ----------- | -------------------------------------- | --------------- |
+| `APP_ENV`   | Runtime environment (`development`, `production`, etc.) | `development`   |
+| `APP_NAME`  | Application name                       | `pantry-server` |
+| `PORT`      | Server port                            | `8000`          |
+| `HOST`      | Server host                            | `0.0.0.0`       |
+| `RELOAD`    | Enable auto-reload                     | `True`          |
+| `LOG_LEVEL` | Base logging level (overridden by `APP_ENV` for prod) | `INFO`          |
 
 #### CORS Configuration
 
@@ -376,7 +378,7 @@ FastAPI dependencies for:
 | ----------------------------------------- | --------------------------- | ---------------------- |
 | `GOOGLE_GENERATIVE_AI_API_KEY`            | Google AI API key           | —                      |
 | `GEMINI_MODEL`                            | Gemini model name           | `gemini-2.5-flash`     |
-| `GEMINI_TEMPERATURE`                      | Model temperature (0.0-1.0) | `0.0`                  |
+| `GEMINI_TEMPERATURE`                      | Model temperature (0.0–2.0, validated) | `0.0`                  |
 | `GEMINI_MAX_TOKENS`                       | Maximum tokens per response | `1000`                 |
 | `GEMINI_MAX_RETRIES`                      | Maximum retry attempts      | `2`                    |
 | `GEMINI_EMBEDDINGS_MODEL`                 | Embeddings model name       | `gemini-embedding-001` |
@@ -384,10 +386,10 @@ FastAPI dependencies for:
 
 #### Rate Limiting
 
-| Variable                | Description          | Default |
-| ----------------------- | -------------------- | ------- |
-| `RATE_LIMIT_ENABLED`    | Enable rate limiting | `True`  |
-| `RATE_LIMIT_PER_MINUTE` | Requests per minute  | `60`    |
+| Variable                | Description                                 | Default |
+| ----------------------- | ------------------------------------------- | ------- |
+| `RATE_LIMIT_ENABLED`    | Enable SlowAPI-based rate limiting          | `True`  |
+| `RATE_LIMIT_PER_MINUTE` | Default requests per minute (global limiter) | `60`    |
 
 #### Background Workers
 
@@ -421,12 +423,12 @@ FastAPI dependencies for:
 
 The pantry router is always included. Endpoints:
 
-- **POST** `/pantry/add_item` - Add a single pantry item
-- **POST** `/pantry/bulk_add` - Add multiple pantry items
-- **GET** `/pantry/get_household_items` - List all pantry items in the current household
-- **GET** `/pantry/get_my_items` - List pantry items owned by the current user in the household
-- **PUT** `/pantry/update_item` - Update a pantry item
-- **DELETE** `/pantry/delete_item` - Delete a pantry item
+- **POST** `/pantry/add-item` - Add a single pantry item (legacy alias: `/pantry/add_item`)
+- **POST** `/pantry/bulk-add` - Add multiple pantry items (legacy alias: `/pantry/bulk_add`)
+- **GET** `/pantry/household-items` - List all pantry items in the current household (legacy alias: `/pantry/get_household_items`)
+- **GET** `/pantry/my-items` - List pantry items owned by the current user in the household (legacy alias: `/pantry/get_my_items`)
+- **PUT** `/pantry/update-item` - Update a pantry item (legacy alias: `/pantry/update_item`)
+- **DELETE** `/pantry/delete-item` - Delete a pantry item (legacy alias: `/pantry/delete_item`)
 
 ### Planned Endpoints
 

@@ -259,10 +259,16 @@ class HouseholdService:
             logger.error("Join household: user not in any household", extra={"user_id": str(user_id)})
             raise AppError("User is not in any household", status_code=status.HTTP_400_BAD_REQUEST)
         old_household_id = UUID(_first_row(membership)["household_id"])
-        # Don't rejoin the same household.
+        # If already in the target household, treat as idempotent success.
         if old_household_id == new_household_id:
-            logger.info("Join household: already in target household", extra={"user_id": str(user_id), "household_id": str(new_household_id)})
-            raise AppError("Already in this household", status_code=status.HTTP_400_BAD_REQUEST)
+            logger.info(
+                "Join household: already in target household, treating as idempotent no-op",
+                extra={"user_id": str(user_id), "household_id": str(new_household_id)},
+            )
+            return HouseholdJoinResponse(
+                household=_row_to_household_response(target_row),
+                items_moved=0,
+            )
 
         # Step 4: Move all of user's pantry items to new household.
         updated = await anyio.to_thread.run_sync(

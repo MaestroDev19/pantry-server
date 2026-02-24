@@ -2,6 +2,7 @@ from __future__ import annotations
 from dotenv import load_dotenv
 import os
 import ast
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Load environment variables from a .env file into the process environment
@@ -66,11 +67,19 @@ class AppSettings(BaseSettings):
     reload: bool = str_to_bool(os.getenv("RELOAD", "True"))
 
     gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
-    gemini_temperature: float = float(os.getenv("GEMINI_TEMPERATURE", "0.0"))
-    gemini_max_tokens: int | None = parse_int_or_none(os.getenv("GEMINI_MAX_TOKENS", "1000"))
+    gemini_temperature: float = Field(
+        default=float(os.getenv("GEMINI_TEMPERATURE", "0.0")),
+    )
+    gemini_max_tokens: int | None = parse_int_or_none(
+        os.getenv("GEMINI_MAX_TOKENS", "1000")
+    )
     gemini_max_retries: int = int(os.getenv("GEMINI_MAX_RETRIES", "2"))
-    gemini_embeddings_model: str = os.getenv("GEMINI_EMBEDDINGS_MODEL", "gemini-embedding-001")
-    gemini_embeddings_output_dimensionality: int = int(os.getenv("GEMINI_EMBEDDINGS_OUTPUT_DIMENSIONALITY", "768"))
+    gemini_embeddings_model: str = os.getenv(
+        "GEMINI_EMBEDDINGS_MODEL", "gemini-embedding-001"
+    )
+    gemini_embeddings_output_dimensionality: int = int(
+        os.getenv("GEMINI_EMBEDDINGS_OUTPUT_DIMENSIONALITY", "768")
+    )
 
     rate_limit_enabled: bool = str_to_bool(os.getenv("RATE_LIMIT_ENABLED", "True"))
     rate_limit_per_minute: int = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))
@@ -80,14 +89,36 @@ class AppSettings(BaseSettings):
     embedding_worker_interval: int = int(os.getenv("EMBEDDING_WORKER_INTERVAL", "5"))
 
     log_level: str = os.getenv("LOG_LEVEL", "INFO")
-    debug: bool = str_to_bool(os.getenv("DEBUG", "False"))
 
     cors_origins: list[str] = parse_cors_origins(
         os.getenv(
             "CORS_ORIGINS",
-            "['http://localhost:3000', 'http://localhost:5173', '*']"
+            "['http://localhost:3000', 'http://localhost:5173', '*']",
         )
     )
+
+    @field_validator("gemini_temperature")
+    @classmethod
+    def validate_gemini_temperature(cls, value: float) -> float:
+        if not 0.0 <= value <= 2.0:
+            raise ValueError("GEMINI_TEMPERATURE must be between 0.0 and 2.0")
+        return value
+
+    @field_validator("gemini_max_retries")
+    @classmethod
+    def validate_gemini_max_retries(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError("GEMINI_MAX_RETRIES must be non-negative")
+        return value
+
+    @field_validator("gemini_embeddings_output_dimensionality")
+    @classmethod
+    def validate_gemini_embeddings_output_dimensionality(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError(
+                "GEMINI_EMBEDDINGS_OUTPUT_DIMENSIONALITY must be a positive integer"
+            )
+        return value
 
 settings = AppSettings()
 

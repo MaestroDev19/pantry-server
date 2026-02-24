@@ -3,7 +3,12 @@ from __future__ import annotations
 
 import pytest
 
-from app.core.config import parse_int_or_none, parse_cors_origins, str_to_bool
+from app.core.config import (
+    AppSettings,
+    parse_int_or_none,
+    parse_cors_origins,
+    str_to_bool,
+)
 
 
 def test_str_to_bool_true_values() -> None:
@@ -42,3 +47,15 @@ def test_parse_cors_origins_comma_separated() -> None:
 def test_parse_cors_origins_list_literal() -> None:
     result = parse_cors_origins("['http://a.com', 'http://b.com']")
     assert result == ["http://a.com", "http://b.com"]
+
+
+def test_gemini_temperature_within_range(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GEMINI_TEMPERATURE", "1.2")
+    settings = AppSettings()  # type: ignore[call-arg]
+    assert 0.0 <= settings.gemini_temperature <= 2.0
+
+
+def test_gemini_temperature_out_of_range_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GEMINI_TEMPERATURE", "3.5")
+    with pytest.raises(ValueError):
+        AppSettings()  # type: ignore[call-arg]

@@ -10,6 +10,7 @@ from supabase import Client
 
 from app.core.exceptions import AppError
 from app.core.logging import get_logger
+from app.ai.retriever_cache import get_retriever_cache
 from app.ai.vector_store import get_vector_store
 from app.models.pantry import (
     PantryItem,
@@ -24,6 +25,7 @@ from app.utils.date_time_styling import format_iso_date, format_iso_datetime
 from app.utils.embedding import embeddings_client
 
 logger = get_logger(__name__)
+_retriever_cache = get_retriever_cache()
 
 
 async def _ensure_user_in_household(
@@ -167,6 +169,8 @@ class PantryService:
             embedding_generated = False
 
         logger.info("Pantry item added", extra={"item_id": row.get("id"), "household_id": str(household_id), "embedding_generated": embedding_generated})
+        # Vector index + RAG cache invalidation: any write changes pantry state.
+        _retriever_cache.invalidate_household(str(household_id))
         return PantryItemUpsertResponse(
             id=row["id"],
             is_new=True,
@@ -357,10 +361,13 @@ class PantryService:
         """
         try:
             # Issue an update, restricting by both household and owner id.
+            data = pantry_item.model_dump()
+            data["updated_at"] = format_iso_datetime(value=datetime.now())
+            data["expiry_date"] = format_iso_date(value=data["expiry_date"]) if data["expiry_date"] else None
             response = await anyio.to_thread.run_sync(
                 lambda: (
                     self.supabase.table("pantry_items")
-                    .update(pantry_item.model_dump())
+                    .update(data)
                     .eq("household_id", str(household_id))
                     .eq("owner_id", str(user_id))
                     .execute()
@@ -376,6 +383,7 @@ class PantryService:
 
         row = response.data[0]
         logger.info("Pantry item updated", extra={"item_id": str(row.get("id")), "household_id": str(household_id)})
+        _retriever_cache.invalidate_household(str(household_id))
         return PantryItemUpsertResponse(
             id=row["id"],
             is_new=False,
@@ -420,6 +428,7 @@ class PantryService:
 
         row = response.data[0]
         logger.info("Pantry item deleted", extra={"item_id": str(item_id), "household_id": str(household_id)})
+        _retriever_cache.invalidate_household(str(household_id))
         return PantryItemUpsertResponse(
             id=row["id"],
             is_new=False,
