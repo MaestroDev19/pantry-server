@@ -56,6 +56,7 @@ Pantry Server is a modern, scalable backend API built with FastAPI that enables 
 
 #### Household API
 
+- ✅ Create household (`POST /households/create`) — create a new household and make the current user owner and member
 - ✅ Join household by invite code (`POST /households/join`) — migrates user's pantry items and switches membership
 - ✅ Leave household (`POST /households/leave`) — creates a new personal household and moves items
 - ✅ Convert personal to joinable (`POST /households/convert-to-joinable`) — make a personal household shareable
@@ -415,6 +416,7 @@ FastAPI dependencies for:
 
 #### Households (authenticated)
 
+- **POST** `/households/create` - Create a new household and make the current user its owner and member.
 - **POST** `/households/join` - Join a household by invite code. Body: `{"invite_code": "ABC123"}`. The user leaves their current household; their pantry items are moved to the new household.
 - **POST** `/households/leave` - Leave the current household and switch to a new personal household. Pantry items are moved to the new personal household.
 - **POST** `/households/convert-to-joinable` - Convert the current user's personal household to a joinable (shared) household. Optional body: `{"name": "Household Name"}`. Returns the household with `invite_code` for sharing.

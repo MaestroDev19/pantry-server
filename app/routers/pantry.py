@@ -1,8 +1,6 @@
-from __future__ import annotations
-
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Request, status
 from supabase import Client
 
 from app.core.cache import get_cache
@@ -73,6 +71,7 @@ def get_pantry_service(supabase: Client = Depends(get_supabase_client)) -> Pantr
 
 @rate_limit
 async def add_single_pantry_item(
+    request: Request,
     *,
     pantry_item: PantryItemUpsert,
     household_id: UUID = Depends(get_current_household_id),
@@ -98,6 +97,7 @@ async def add_single_pantry_item(
 
 @rate_limit
 async def add_multiple_pantry_items(
+    request: Request,
     *,
     pantry_items: PantryItemsBulkCreateRequest,
     household_id: UUID = Depends(get_current_household_id),
@@ -177,6 +177,7 @@ async def get_my_pantry_items(
 
 @rate_limit
 async def update_pantry_item(
+    request: Request,
     *,
     pantry_item: PantryItemUpsert,
     household_id: UUID = Depends(get_current_household_id),
@@ -202,6 +203,7 @@ async def update_pantry_item(
 
 @rate_limit
 async def delete_pantry_item(
+    request: Request,
     *,
     item_id: UUID,
     household_id: UUID = Depends(get_current_household_id),

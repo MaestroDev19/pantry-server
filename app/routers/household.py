@@ -1,8 +1,6 @@
-from __future__ import annotations
-
 from uuid import UUID
 
-from fastapi import APIRouter, Body, Depends
+from fastapi import APIRouter, Body, Depends, Request
 from supabase import Client
 
 from app.core.logging import get_logger
@@ -33,6 +31,7 @@ def get_household_service(supabase: Client = Depends(get_supabase_client)) -> Ho
 
 @rate_limit
 async def create_household(
+    request: Request,
     *,
     body: HouseholdCreateRequest,
     user_id: UUID = Depends(get_current_user_id),
@@ -58,6 +57,7 @@ async def create_household(
 
 @rate_limit
 async def join_household(
+    request: Request,
     *,
     body: HouseholdJoinRequest,
     user_id: UUID = Depends(get_current_user_id),
@@ -91,6 +91,7 @@ async def join_household(
 
 @rate_limit
 async def leave_household(
+    request: Request,
     *,
     user_id: UUID = Depends(get_current_user_id),
     household_service: HouseholdService = Depends(get_household_service),
@@ -118,6 +119,7 @@ async def leave_household(
 
 @rate_limit
 async def convert_to_joinable(
+    request: Request,
     *,
     body: HouseholdConvertToJoinableRequest | None = Body(None),
     user_id: UUID = Depends(get_current_user_id),
